@@ -14,8 +14,9 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 2px; }
     input::placeholder, textarea::placeholder { color: #334155; }
-    @keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
-    @keyframes spin  { to{transform:rotate(360deg)} }
+    @keyframes pulse      { 0%,100%{opacity:.4} 50%{opacity:1} }
+    @keyframes spin       { to{transform:rotate(360deg)} }
+    @keyframes tracePulse { 0%,100%{opacity:0.5} 50%{opacity:1} }
   </style>
 </head>
 <body>
@@ -226,21 +227,33 @@ function NodeShape({ type, s, selected }) {
   return <circle r={15} fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
 }
 
-function GraphNode({ node, selected, dimmed, cited, onMouseDown }) {
+function GraphNode({ node, selected, dimmed, cited, traceState, onMouseDown }) {
   const s = STYLE[node.node_type] || STYLE.CONCEPT;
+  const r = nodeR(node.node_type);
+  // During trace, dim nodes not in trace path
+  const traceDim = traceState === null && dimmed === false;
   return (
     <g transform={`translate(${node.x},${node.y})`}
-       style={{ opacity: dimmed ? 0.12 : 1, cursor: 'grab', transition: 'opacity 0.2s' }}
+       style={{ opacity: dimmed ? 0.12 : traceDim ? 0.18 : 1,
+                cursor: 'grab', transition: 'opacity 0.25s' }}
        onMouseDown={e => { e.stopPropagation(); onMouseDown(e, node.node_id); }}>
-      {/* L1: cited node green glow ring */}
-      {cited && <circle r={nodeR(node.node_type) + 10} fill="none"
+      {/* L2: trace focused ring — animated pulse */}
+      {traceState === 'focused' && <circle r={r + 16} fill="none"
+        stroke="#64B5F6" strokeWidth={2.5}
+        style={{ animation: 'tracePulse 0.9s ease-in-out infinite' }} />}
+      {/* L2: trace visited ring */}
+      {traceState === 'visited' && <circle r={r + 11} fill="none"
+        stroke="#4CAF80" strokeWidth={1.5} opacity={0.45} />}
+      {/* L1: cited node green dashed ring (when no trace active) */}
+      {cited && !traceState && <circle r={r + 10} fill="none"
         stroke="#4CAF80" strokeWidth={1.5} strokeDasharray="3 4" opacity={0.6} />}
       {selected && <circle r={38} fill="none" stroke={s.stroke} strokeWidth={1}
         strokeDasharray="4 3" opacity={0.3} />}
       <NodeShape type={node.node_type} s={s} selected={selected} />
-      <text y={nodeR(node.node_type) + 14} textAnchor="middle"
-        fill={cited ? '#86efac' : s.text} fontSize={10} fontFamily="ui-sans-serif,system-ui,sans-serif"
-        fontWeight={selected || cited ? 600 : 400}
+      <text y={r + 14} textAnchor="middle"
+        fill={traceState === 'focused' ? '#fff' : cited ? '#86efac' : s.text}
+        fontSize={10} fontFamily="ui-sans-serif,system-ui,sans-serif"
+        fontWeight={selected || cited || traceState === 'focused' ? 600 : 400}
         style={{ userSelect: 'none', pointerEvents: 'none' }}>
         {node.name}
       </text>
@@ -296,6 +309,12 @@ function App() {
 
   // L1: cited nodes from query response (node_id → source)
   const [citedNodes, setCitedNodes] = useState(new Map());
+
+  // L2: trace replay
+  const [traceSteps, setTraceSteps] = useState([]);  // steps with node_ids
+  const [traceStep,  setTraceStep]  = useState(-1);  // -1 = inactive
+  const [traceAuto,  setTraceAuto]  = useState(false);
+  const traceTimerRef = useRef(null);
 
   // ViewBox
   const [vb, setVb]     = useState({ x:-700, y:-550, w:1400, h:1100 });
@@ -547,17 +566,22 @@ function App() {
   function sendMessage(text) {
     if (!text.trim() || busy) return;
     setInput('');
-    setCitedNodes(new Map());  // clear previous citations
+    setCitedNodes(new Map());
+    setTraceSteps([]); setTraceStep(-1); setTraceAuto(false);
     setMsgs(prev => [...prev, { role:'user', parts:[{ t:'text', v:text }] }]);
     setBusy(true);
     fetch('/query', {
       method:'POST', headers:{ 'Content-Type':'application/json' },
       body: JSON.stringify({ question: text }),
     }).then(r => r.json()).then(data => {
-      // L1: build cited nodes map
+      // L1: cited nodes
       const cmap = new Map();
       (data.cited_nodes || []).forEach(n => { if (n.source) cmap.set(n.node_id, n.source); });
       setCitedNodes(cmap);
+      // L2: trace steps — only keep steps that have node_ids or are the final answer
+      const steps = (data.steps || []).filter(s => s.node_ids?.length || s.answer);
+      setTraceSteps(steps);
+      if (steps.length > 0) { setTraceStep(0); setTraceAuto(true); }
       setMsgs(prev => [...prev, { role:'assistant', parts: parseAnswer(data.answer, nodes), steps: data.steps }]);
       setBusy(false);
     }).catch(e => {
@@ -566,10 +590,36 @@ function App() {
     });
   }
 
+  // ── Trace auto-play ────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!traceAuto) return;
+    traceTimerRef.current = setInterval(() => {
+      setTraceStep(prev => {
+        if (prev >= traceSteps.length - 1) { setTraceAuto(false); return prev; }
+        return prev + 1;
+      });
+    }, 900);
+    return () => clearInterval(traceTimerRef.current);
+  }, [traceAuto, traceSteps.length]);
+
   // ── Derived ────────────────────────────────────────────────────────────────
 
   const hasSel   = sel !== null;
   const allTypes = useMemo(() => [...new Set(nodes.map(n => n.node_type))], [nodes]);
+
+  // Map of node_id → 'focused' | 'visited' for trace replay
+  const traceNodeStates = useMemo(() => {
+    const map = new Map();
+    if (traceStep < 0 || !traceSteps.length) return map;
+    for (let i = 0; i <= traceStep && i < traceSteps.length; i++) {
+      const state = (i === traceStep) ? 'focused' : 'visited';
+      (traceSteps[i]?.node_ids || []).forEach(id => {
+        if (state === 'focused' || map.get(id) !== 'focused') map.set(id, state);
+      });
+    }
+    return map;
+  }, [traceStep, traceSteps]);
 
   const suggestions = useMemo(() => {
     if (!speakers.length) return [];
@@ -680,13 +730,17 @@ function App() {
             })}
 
             {/* Nodes */}
-            {nodes.map(n => (
-              <GraphNode key={n.node_id} node={n}
-                selected={sel === n.node_id}
-                dimmed={hasSel && !hl.has(n.node_id)}
-                cited={citedNodes.has(n.node_id)}
-                onMouseDown={handleNodeMouseDown} />
-            ))}
+            {nodes.map(n => {
+              const ts = traceNodeStates.size > 0 ? (traceNodeStates.get(n.node_id) ?? null) : undefined;
+              return (
+                <GraphNode key={n.node_id} node={n}
+                  selected={sel === n.node_id}
+                  dimmed={hasSel && !hl.has(n.node_id)}
+                  cited={citedNodes.has(n.node_id)}
+                  traceState={ts}
+                  onMouseDown={handleNodeMouseDown} />
+              );
+            })}
           </svg>
         )}
 
@@ -710,6 +764,68 @@ function App() {
           </div>
         )}
       </div>
+
+      {/* ── Trace replay bar (L2) ── */}
+      {traceSteps.length > 0 && (() => {
+        const step = traceSteps[traceStep] || traceSteps[0];
+        const isFailed = step && !step.answer && !(step.node_ids?.length);
+        const toolLabel = step?.tool
+          ? `${step.tool}[${step.query || ''}]`
+          : step?.answer ? '✓ Final Answer' : '—';
+        return (
+          <div style={{ flexShrink:0, background:'#08081a', borderBottom:'1px solid #111827',
+            padding:'6px 14px', display:'flex', alignItems:'center', gap:10 }}>
+            {/* step counter */}
+            <span style={{ fontSize:10, color:'#1e3a5f', whiteSpace:'nowrap', flexShrink:0 }}>
+              TRACE
+            </span>
+            <span style={{ fontSize:11, color:'#334155', whiteSpace:'nowrap', flexShrink:0 }}>
+              {traceStep + 1} / {traceSteps.length}
+            </span>
+            {/* tool badge */}
+            <span style={{ fontSize:10, padding:'2px 7px', borderRadius:3, whiteSpace:'nowrap',
+              background: isFailed ? '#3A1E1E' : step?.answer ? '#032518' : '#0f2040',
+              color: isFailed ? '#E57373' : step?.answer ? '#4CAF80' : '#64B5F6',
+              border:`1px solid ${isFailed ? '#E5737333' : step?.answer ? '#4CAF8033' : '#3b82f633'}`,
+              flexShrink:0 }}>
+              {toolLabel}
+            </span>
+            {/* thought text */}
+            {step?.thought && (
+              <span style={{ fontSize:11, color:'#334155', overflow:'hidden',
+                textOverflow:'ellipsis', whiteSpace:'nowrap', flex:1, fontStyle:'italic' }}>
+                {step.thought}
+              </span>
+            )}
+            {/* controls */}
+            <div style={{ display:'flex', gap:4, flexShrink:0, marginLeft:'auto' }}>
+              {[['⏮', () => { setTraceStep(0); setTraceAuto(false); }],
+                ['◀', () => { setTraceStep(p => Math.max(0, p-1)); setTraceAuto(false); }],
+                [traceAuto ? '⏸' : '▶', () => setTraceAuto(p => !p)],
+                ['▶|', () => { setTraceStep(traceSteps.length-1); setTraceAuto(false); }],
+              ].map(([label, fn]) => (
+                <button key={label} onClick={fn} style={{
+                  width:26, height:22, borderRadius:4, fontSize:10,
+                  background:'#0b0b18', border:'1px solid #1e293b',
+                  color:'#475569', cursor:'pointer', display:'flex',
+                  alignItems:'center', justifyContent:'center' }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor='#3b82f6'}
+                  onMouseLeave={e => e.currentTarget.style.borderColor='#1e293b'}>
+                  {label}
+                </button>
+              ))}
+              <button onClick={() => { setTraceSteps([]); setTraceStep(-1); setTraceAuto(false); }}
+                style={{ width:22, height:22, borderRadius:4, fontSize:10,
+                  background:'#0b0b18', border:'1px solid #1e293b',
+                  color:'#1e293b', cursor:'pointer' }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor='#ef4444'; e.currentTarget.style.color='#ef4444'; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor='#1e293b'; e.currentTarget.style.color='#1e293b'; }}>
+                ✕
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Anchor bar ── */}
       <div style={{ height: anchor ? 54 : 0, flexShrink:0, overflow:'hidden',
