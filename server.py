@@ -80,6 +80,51 @@ def _enrich_graph(graph: GraphMemory) -> dict:
     return data
 
 
+def _enrich_cited_nodes(node_ids: list[str]) -> list[dict]:
+    """For each cited node_id, find its source dialogue via associated triples."""
+    if _graph is None:
+        return []
+    result = []
+    seen: set[str] = set()
+    # Build node_id → first triple with dialog_id
+    triple_by_node: dict[str, dict] = {}
+    for t in _graph._triples:
+        if t.dialog_id:
+            for nid in (t.subject_id, t.object_id):
+                if nid not in triple_by_node:
+                    triple_by_node[nid] = {
+                        "dialog_id": t.dialog_id,
+                        "session_idx": t.session_idx,
+                        "date": t.date,
+                    }
+    for nid in node_ids:
+        if nid in seen:
+            continue
+        seen.add(nid)
+        node = _graph._nodes.get(nid)
+        if not node:
+            continue
+        entry: dict = {
+            "node_id": nid,
+            "name": node.name,
+            "node_type": node.node_type,
+            "source": None,
+        }
+        tri = triple_by_node.get(nid)
+        if tri:
+            dia_id = tri["dialog_id"]
+            dm = _dialog_map.get(dia_id)
+            if dm:
+                entry["source"] = {
+                    "speaker": dm.get("speaker", ""),
+                    "text": dm.get("text", ""),
+                    "session_num": dm.get("session_num", tri["session_idx"]),
+                    "date": dm.get("date", tri["date"]),
+                }
+        result.append(entry)
+    return result
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -169,9 +214,10 @@ def get_graph():
 def query(req: QueryRequest):
     if _graph is None:
         return {"answer": "No memory built yet. Click '+ Add Memory' to get started.",
-                "steps": []}
+                "steps": [], "cited_nodes": []}
     from core.query_agent import MemoryQueryAgent
     client = APIClient()
     agent = MemoryQueryAgent(_graph, client)
-    answer, steps = agent.answer(req.question, speakers=_speakers or None)
-    return {"answer": answer, "steps": steps}
+    answer, steps, cited_node_ids = agent.answer(req.question, speakers=_speakers or None)
+    cited_nodes = _enrich_cited_nodes(cited_node_ids)
+    return {"answer": answer, "steps": steps, "cited_nodes": cited_nodes}

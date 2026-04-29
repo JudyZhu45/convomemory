@@ -226,18 +226,21 @@ function NodeShape({ type, s, selected }) {
   return <circle r={15} fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
 }
 
-function GraphNode({ node, selected, dimmed, onMouseDown }) {
+function GraphNode({ node, selected, dimmed, cited, onMouseDown }) {
   const s = STYLE[node.node_type] || STYLE.CONCEPT;
   return (
     <g transform={`translate(${node.x},${node.y})`}
        style={{ opacity: dimmed ? 0.12 : 1, cursor: 'grab', transition: 'opacity 0.2s' }}
        onMouseDown={e => { e.stopPropagation(); onMouseDown(e, node.node_id); }}>
+      {/* L1: cited node green glow ring */}
+      {cited && <circle r={nodeR(node.node_type) + 10} fill="none"
+        stroke="#4CAF80" strokeWidth={1.5} strokeDasharray="3 4" opacity={0.6} />}
       {selected && <circle r={38} fill="none" stroke={s.stroke} strokeWidth={1}
         strokeDasharray="4 3" opacity={0.3} />}
       <NodeShape type={node.node_type} s={s} selected={selected} />
       <text y={nodeR(node.node_type) + 14} textAnchor="middle"
-        fill={s.text} fontSize={10} fontFamily="ui-sans-serif,system-ui,sans-serif"
-        fontWeight={selected ? 600 : 400}
+        fill={cited ? '#86efac' : s.text} fontSize={10} fontFamily="ui-sans-serif,system-ui,sans-serif"
+        fontWeight={selected || cited ? 600 : 400}
         style={{ userSelect: 'none', pointerEvents: 'none' }}>
         {node.name}
       </text>
@@ -290,6 +293,9 @@ function App() {
   const [hl, setHl]         = useState(new Set());
   const [anchor, setAnchor] = useState(null);
   const [hovE, setHovE]     = useState(null);
+
+  // L1: cited nodes from query response (node_id → source)
+  const [citedNodes, setCitedNodes] = useState(new Map());
 
   // ViewBox
   const [vb, setVb]     = useState({ x:-700, y:-550, w:1400, h:1100 });
@@ -427,8 +433,14 @@ function App() {
       if (t.object_id  === id) connected.add(t.subject_id);
     });
     setHl(connected);
-    const edge = triples.find(t => (t.subject_id === id || t.object_id === id) && t.source);
-    setAnchor(edge?.source || null);
+    // L1: prefer cited node source, fall back to edge source
+    const citedSrc = citedNodes.get(id);
+    if (citedSrc) {
+      setAnchor({ ...citedSrc, _cited: true });
+    } else {
+      const edge = triples.find(t => (t.subject_id === id || t.object_id === id) && t.source);
+      setAnchor(edge?.source || null);
+    }
   }
 
   function clearSel() { setSel(null); setHl(new Set()); setAnchor(null); }
@@ -535,12 +547,17 @@ function App() {
   function sendMessage(text) {
     if (!text.trim() || busy) return;
     setInput('');
+    setCitedNodes(new Map());  // clear previous citations
     setMsgs(prev => [...prev, { role:'user', parts:[{ t:'text', v:text }] }]);
     setBusy(true);
     fetch('/query', {
       method:'POST', headers:{ 'Content-Type':'application/json' },
       body: JSON.stringify({ question: text }),
     }).then(r => r.json()).then(data => {
+      // L1: build cited nodes map
+      const cmap = new Map();
+      (data.cited_nodes || []).forEach(n => { if (n.source) cmap.set(n.node_id, n.source); });
+      setCitedNodes(cmap);
       setMsgs(prev => [...prev, { role:'assistant', parts: parseAnswer(data.answer, nodes), steps: data.steps }]);
       setBusy(false);
     }).catch(e => {
@@ -667,6 +684,7 @@ function App() {
               <GraphNode key={n.node_id} node={n}
                 selected={sel === n.node_id}
                 dimmed={hasSel && !hl.has(n.node_id)}
+                cited={citedNodes.has(n.node_id)}
                 onMouseDown={handleNodeMouseDown} />
             ))}
           </svg>
@@ -699,8 +717,11 @@ function App() {
         background:'#0c0c1e', borderBottom: anchor ? '1px solid #111827' : 'none',
         display:'flex', alignItems:'center', padding:'0 16px', gap:10 }}>
         {anchor && <>
-          <span style={{ fontSize:10, opacity:0.5 }}>📍</span>
-          <span style={{ fontSize:11, color:'#3b82f6', whiteSpace:'nowrap' }}>Session {anchor.session_num}</span>
+          <span style={{ fontSize:10, opacity:0.5 }}>{anchor._cited ? '🔍' : '📍'}</span>
+          {anchor._cited && <span style={{ fontSize:10, padding:'1px 6px', borderRadius:3,
+            background:'#032518', color:'#4CAF80', border:'1px solid #22c55e33',
+            whiteSpace:'nowrap' }}>来源</span>}
+          <span style={{ fontSize:11, color: anchor._cited ? '#4CAF80' : '#3b82f6', whiteSpace:'nowrap' }}>Session {anchor.session_num}</span>
           <span style={{ fontSize:10, color:'#1e293b', whiteSpace:'nowrap' }}>{anchor.date}</span>
           <div style={{ width:1, height:14, background:'#161628', flexShrink:0 }} />
           <span style={{ fontSize:11, color:'#334155', whiteSpace:'nowrap' }}>{anchor.speaker}:</span>

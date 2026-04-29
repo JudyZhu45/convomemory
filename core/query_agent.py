@@ -17,17 +17,18 @@ _MAX_TRIPLES = 20
 
 # ── Tool implementations ──────────────────────────────────────────────────────
 
-def _search_entity(name: str, graph: GraphMemory) -> str:
+def _search_entity(name: str, graph: GraphMemory) -> tuple[str, list[str]]:
     nodes, triples = graph.get_subgraph(name, depth=2, bidirectional=True)
     if not triples:
-        return f"No information found for: {name!r}. Try search_semantic or a different spelling."
-    return graph.linearize_subgraph(nodes, triples[:_MAX_TRIPLES], seed_name=name)
+        return f"No information found for: {name!r}. Try search_semantic or a different spelling.", []
+    node_ids = [n.node_id for n in nodes]
+    return graph.linearize_subgraph(nodes, triples[:_MAX_TRIPLES], seed_name=name), node_ids
 
 
-def _search_semantic(phrase: str, graph: GraphMemory, phrase_emb: list[float]) -> str:
+def _search_semantic(phrase: str, graph: GraphMemory, phrase_emb: list[float]) -> tuple[str, list[str]]:
     similar = graph.find_entity_by_embedding(phrase_emb, top_k=5, threshold=0.60)
     if not similar:
-        return f"No semantically similar nodes found for: {phrase!r}."
+        return f"No semantically similar nodes found for: {phrase!r}.", []
 
     seen_node_ids: set[str] = set()
     seen_triple_ids: set[str] = set()
@@ -45,7 +46,7 @@ def _search_semantic(phrase: str, graph: GraphMemory, phrase_emb: list[float]) -
                 seen_triple_ids.add(t.triple_id)
 
     if not all_triples:
-        return "Found similar nodes but no connected facts."
+        return "Found similar nodes but no connected facts.", []
 
     if len(all_triples) > _MAX_TRIPLES:
         scored = [(n, _cosine(phrase_emb, n.embedding)) for n in all_nodes if n.embedding]
@@ -58,14 +59,16 @@ def _search_semantic(phrase: str, graph: GraphMemory, phrase_emb: list[float]) -
         used = {t.subject_id for t in all_triples} | {t.object_id for t in all_triples}
         all_nodes = [n for n in all_nodes if n.node_id in used]
 
-    return graph.linearize_subgraph(all_nodes, all_triples, seed_name=similar[0].name)
+    node_ids = [n.node_id for n in all_nodes]
+    return graph.linearize_subgraph(all_nodes, all_triples, seed_name=similar[0].name), node_ids
 
 
-def _lookup_node(node_name: str, graph: GraphMemory) -> str:
+def _lookup_node(node_name: str, graph: GraphMemory) -> tuple[str, list[str]]:
     nodes, triples = graph.get_subgraph(node_name, depth=1, bidirectional=True)
     if not triples:
-        return f"No connections found for: {node_name!r}."
-    return graph.linearize_subgraph(nodes, triples[:_MAX_TRIPLES], seed_name=node_name)
+        return f"No connections found for: {node_name!r}.", []
+    node_ids = [n.node_id for n in nodes]
+    return graph.linearize_subgraph(nodes, triples[:_MAX_TRIPLES], seed_name=node_name), node_ids
 
 
 _TOOL_DESCRIPTIONS = """\
@@ -117,10 +120,14 @@ class MemoryQueryAgent:
         self,
         question: str,
         speakers: list[str] | None = None,
-    ) -> tuple[str, list[dict]]:
-        """Answer a question. Returns (answer, steps) where steps is the ReAct trace."""
+    ) -> tuple[str, list[dict], list[str]]:
+        """Answer a question. Returns (answer, steps, cited_node_ids).
+
+        steps: ReAct trace, each step has node_ids, tool, query fields.
+        cited_node_ids: deduplicated union of all node_ids across steps.
+        """
         if self.graph.node_count == 0:
-            return "No memory built yet. Please build the graph first.", []
+            return "No memory built yet. Please build the graph first.", [], []
 
         q_emb = self.client.embed_single(question)
         history: list[dict] = [{"role": "system", "content": _SYSTEM}]
@@ -133,6 +140,7 @@ class MemoryQueryAgent:
         user_msg = first_user
         observations: list[str] = []
         steps: list[dict] = []
+        all_node_ids: list[str] = []  # ordered, for cited_nodes
 
         for step in range(MAX_ITER):
             response = self.client.gpt_with_history(history, user_msg, max_tokens=256)
@@ -144,19 +152,20 @@ class MemoryQueryAgent:
 
             # Parse thought + action for trace
             thought = ""
-            action_str = ""
             for line in response.split("\n"):
                 if line.startswith("Thought:"):
                     thought = line[8:].strip()
-                elif line.startswith("Action:"):
-                    action_str = line[7:].strip()
 
             # Check for Final Answer
             m = _FINAL_ANSWER_RE.search(response)
             if m:
                 answer = m.group(1).strip()
-                steps.append({"thought": thought, "action": None, "observation": None, "answer": answer})
-                return answer, steps
+                steps.append({
+                    "thought": thought, "action": None, "observation": None,
+                    "answer": answer, "node_ids": [], "tool": None, "query": None,
+                })
+                cited = list(dict.fromkeys(all_node_ids))  # dedup, preserve order
+                return answer, steps, cited
 
             # Parse and execute action
             action_match = _ACTION_RE.search(response)
@@ -165,13 +174,17 @@ class MemoryQueryAgent:
 
             tool_name = action_match.group(1).lower()
             tool_arg = action_match.group(2).strip()
-            obs = self._call_tool(tool_name, tool_arg, q_emb)
+            obs, node_ids = self._call_tool(tool_name, tool_arg, q_emb)
+            all_node_ids.extend(node_ids)
 
             steps.append({
                 "thought": thought,
                 "action": f"{tool_name}[{tool_arg}]",
                 "observation": obs,
                 "answer": None,
+                "node_ids": node_ids,
+                "tool": tool_name,
+                "query": tool_arg,
             })
             observations.append(obs)
             user_msg = f"Observation: {obs}"
@@ -181,10 +194,14 @@ class MemoryQueryAgent:
         if steps:
             steps[-1]["answer"] = answer
         else:
-            steps.append({"thought": "", "action": None, "observation": None, "answer": answer})
-        return answer, steps
+            steps.append({
+                "thought": "", "action": None, "observation": None,
+                "answer": answer, "node_ids": [], "tool": None, "query": None,
+            })
+        cited = list(dict.fromkeys(all_node_ids))
+        return answer, steps, cited
 
-    def _call_tool(self, tool_name: str, arg: str, q_emb: list[float]) -> str:
+    def _call_tool(self, tool_name: str, arg: str, q_emb: list[float]) -> tuple[str, list[str]]:
         if tool_name == "search_entity":
             return _search_entity(arg, self.graph)
         elif tool_name == "search_semantic":
@@ -193,7 +210,7 @@ class MemoryQueryAgent:
         elif tool_name == "lookup_node":
             return _lookup_node(arg, self.graph)
         else:
-            return f"Unknown tool: {tool_name!r}. Available: search_entity, search_semantic, lookup_node"
+            return f"Unknown tool: {tool_name!r}. Available: search_entity, search_semantic, lookup_node", []
 
     def _forced_answer(self, question: str, observations: list[str]) -> str:
         if not observations:
