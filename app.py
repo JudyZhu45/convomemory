@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 import streamlit as st
 
@@ -53,13 +53,13 @@ st.markdown("""
 # ── Session state defaults ─────────────────────────────────────────────────────
 
 if "graph" not in st.session_state:
-    st.session_state.graph: GraphMemory | None = None
+    st.session_state.graph = None
 if "speakers" not in st.session_state:
-    st.session_state.speakers: list[str] = []
+    st.session_state.speakers = []
 if "build_log" not in st.session_state:
-    st.session_state.build_log: list[str] = []
+    st.session_state.build_log = []
 if "chat_history" not in st.session_state:
-    st.session_state.chat_history: list[dict] = []
+    st.session_state.chat_history = []
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 
@@ -74,6 +74,11 @@ with st.sidebar:
         value=os.environ.get("OPENAI_API_KEY", ""),
         type="password",
         placeholder="sk-...",
+    )
+    base_url = st.text_input(
+        "Base URL",
+        value=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        placeholder="https://api.openai.com/v1",
     )
     model = st.selectbox("Model", ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4o"], index=0)
 
@@ -106,99 +111,97 @@ tab_build, tab_graph, tab_query = st.tabs([
 with tab_build:
     st.header("Build Memory from Conversations")
 
-    col1, col2 = st.columns([1, 1], gap="large")
+    # ── Step 1: Data source ───────────────────────────────────────────────────
+    source = st.radio(
+        "Data source",
+        ["LoCoMo Demo (conv-26)", "Upload JSON file"],
+        horizontal=True,
+    )
 
-    with col1:
-        st.subheader("Load Conversation")
-        source = st.radio(
-            "Data source",
-            ["LoCoMo Demo (conv-26)", "Upload JSON file"],
-            horizontal=True,
+    sessions = None
+    speakers_detected = []
+
+    if source == "LoCoMo Demo (conv-26)":
+        demo_path = Path(__file__).parent / "demo" / "locomo_sample.json"
+        max_sess = st.slider(
+            "Sessions to process", 1, 19, 5,
+            help="Each session takes ~15s. Start with 3–5 for a quick demo.",
         )
+        if demo_path.exists():
+            demo_data = json.loads(demo_path.read_text())
+            sessions = parse_locomo(demo_data[0], max_sessions=max_sess)
+            speakers_detected = list(dict.fromkeys(
+                d["speaker"] for d in sessions[0]["dialogs"]
+            )) if sessions else []
+            c1, c2 = st.columns([2, 1])
+            c1.success(f"conv-26 ready — {len(sessions)} sessions, speakers: **{', '.join(speakers_detected)}**")
+            with c2.expander("Preview"):
+                for d in sessions[0]["dialogs"][:5]:
+                    st.caption(f"**{d['speaker']}**: {d['text'][:80]}")
+        else:
+            st.error("Demo file not found at demo/locomo_sample.json")
 
-        sessions = None
-        speakers_detected = []
-
-        if source == "LoCoMo Demo (conv-26)":
-            demo_path = Path(__file__).parent / "demo" / "locomo_sample.json"
-            max_sess = st.slider("Max sessions to process", 1, 19, 5,
-                                 help="More sessions = richer memory but slower build (~30s/session)")
-            if demo_path.exists():
-                demo_data = json.loads(demo_path.read_text())
-                sessions = parse_locomo(demo_data[0], max_sessions=max_sess)
+    else:
+        uploaded = st.file_uploader(
+            "Upload conversation JSON",
+            type=["json"],
+            help="Supported: LoCoMo format or Claude.ai export",
+        )
+        fmt = st.radio("Format", ["LoCoMo", "Claude Export"], horizontal=True)
+        if uploaded:
+            try:
+                data = json.load(uploaded)
+                if fmt == "LoCoMo":
+                    sample = data[0] if isinstance(data, list) else data
+                    sessions = parse_locomo(sample)
+                else:
+                    sessions = parse_claude_export(data)
                 speakers_detected = list(dict.fromkeys(
                     d["speaker"] for d in sessions[0]["dialogs"]
                 )) if sessions else []
-                st.success(f"Loaded conv-26: {len(sessions)} sessions, "
-                           f"speakers: {', '.join(speakers_detected)}")
-                with st.expander("Preview session 1"):
-                    for d in sessions[0]["dialogs"][:6]:
-                        st.markdown(f"**{d['speaker']}**: {d['text']}")
-            else:
-                st.error("Demo file not found at demo/locomo_sample.json")
+                st.success(f"Loaded {len(sessions)} sessions")
+            except Exception as e:
+                st.error(f"Parse error: {e}")
 
-        else:
-            uploaded = st.file_uploader(
-                "Upload conversation JSON",
-                type=["json"],
-                help="Supported: LoCoMo format or Claude.ai export",
-            )
-            fmt = st.radio("Format", ["LoCoMo", "Claude Export"], horizontal=True)
-            if uploaded:
+    # ── Step 2: Build ─────────────────────────────────────────────────────────
+    st.divider()
+
+    if not sessions:
+        st.info("Select a data source above to get started.")
+    elif not api_key:
+        st.warning("Add your OpenAI API key in the sidebar.")
+    else:
+        st.info(
+            f"Ready to process **{len(sessions)} sessions** — the agent will extract "
+            f"entities, facts, events and states into a knowledge graph."
+        )
+        if st.button("🚀 Build Memory Graph", type="primary"):
+            client = APIClient(api_key=api_key, base_url=base_url, model=model)
+            progress_bar = st.progress(0)
+            log_placeholder = st.empty()
+            log_lines: list[str] = []
+
+            def on_progress(current: int, total: int, msg: str):
+                pct = int(current / max(total, 1) * 100)
+                progress_bar.progress(pct)
+                log_lines.append(f"[{current}/{total}] {msg}")
+                log_placeholder.code("\n".join(log_lines[-6:]), language=None)
+
+            with st.spinner("Building memory graph…"):
                 try:
-                    data = json.load(uploaded)
-                    if fmt == "LoCoMo":
-                        sample = data[0] if isinstance(data, list) else data
-                        sessions = parse_locomo(sample)
-                    else:
-                        sessions = parse_claude_export(data)
-                    speakers_detected = list(dict.fromkeys(
-                        d["speaker"] for d in sessions[0]["dialogs"]
-                    )) if sessions else []
-                    st.success(f"Loaded {len(sessions)} sessions")
+                    graph = build_graph_from_sessions(
+                        sessions, client, progress_callback=on_progress
+                    )
+                    st.session_state.graph = graph
+                    st.session_state.speakers = speakers_detected
+                    st.session_state.build_log = log_lines
+                    st.session_state.chat_history = []
+                    progress_bar.progress(100)
                 except Exception as e:
-                    st.error(f"Parse error: {e}")
+                    st.error(f"Build failed: {e}")
+                    st.stop()
 
-    with col2:
-        st.subheader("Build")
-
-        if sessions:
-            st.info(f"Ready to process **{len(sessions)} sessions** → extract entities, "
-                    f"facts, events, and states into a knowledge graph.")
-
-            if st.button("🚀 Build Memory Graph", type="primary", use_container_width=True,
-                         disabled=not api_key):
-                if not api_key:
-                    st.error("Add your OpenAI API key in the sidebar.")
-                else:
-                    client = APIClient(api_key=api_key, model=model)
-                    log_placeholder = st.empty()
-                    progress_bar = st.progress(0)
-                    log_lines: list[str] = []
-
-                    def on_progress(current: int, total: int, msg: str):
-                        pct = int(current / max(total, 1) * 100)
-                        progress_bar.progress(pct)
-                        log_lines.append(f"[{current}/{total}] {msg}")
-                        log_placeholder.code("\n".join(log_lines[-8:]), language=None)
-
-                    with st.spinner("Building memory graph…"):
-                        try:
-                            graph = build_graph_from_sessions(
-                                sessions, client, progress_callback=on_progress
-                            )
-                            st.session_state.graph = graph
-                            st.session_state.speakers = speakers_detected
-                            st.session_state.build_log = log_lines
-                            st.session_state.chat_history = []
-                            progress_bar.progress(100)
-                        except Exception as e:
-                            st.error(f"Build failed: {e}")
-                            st.stop()
-
-                    st.success("Memory graph built!")
-        else:
-            st.info("Select a data source on the left to get started.")
+            st.success("Memory graph built! Switch to the Knowledge Graph or Query tab.")
 
     # Build results
     if st.session_state.graph:
@@ -344,7 +347,7 @@ with tab_query:
             with st.chat_message("user"):
                 st.markdown(question)
 
-            client = APIClient(api_key=api_key, model=model)
+            client = APIClient(api_key=api_key, base_url=base_url, model=model)
             agent = MemoryQueryAgent(st.session_state.graph, client)
 
             with st.chat_message("assistant"):

@@ -61,12 +61,14 @@ class APIClient:
     def __init__(
         self,
         api_key: str | None = None,
-        base_url: str = "https://api.openai.com/v1",
+        base_url: str | None = None,
         model: str = "gpt-4.1-mini",
         emb_model: str = "text-embedding-3-small",
     ) -> None:
+        import os
         self._key = api_key or _load_api_key()
-        self._base_url = base_url.rstrip("/")
+        resolved_url = base_url or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        self._base_url = resolved_url.rstrip("/")
         self._chat_url = self._base_url + "/chat/completions"
         self.model = model
         self.emb_model = emb_model

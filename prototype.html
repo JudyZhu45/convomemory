@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ConvoMemory</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #07070f; overflow: hidden; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 2px; }
+    input::placeholder, textarea::placeholder { color: #334155; }
+    @keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
+    @keyframes spin  { to{transform:rotate(360deg)} }
+  </style>
+</head>
+<body>
+<div id="root" style="height:100vh"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useMemo } = React;
+
+// ── Concentric layout constants ───────────────────────────────────────────────
+
+const PERSON_SEP  = 1100;          // horizontal gap between PERSON hubs
+const SECTOR_DEG  = 300;           // degrees each PERSON's cluster fans out
+const SECTOR      = SECTOR_DEG * Math.PI / 180;
+const TYPE_ORDER  = ['STATE', 'EVENT', 'FACT', 'CONCEPT'];
+// Approx rendered width/height of each node type (for radius calculation)
+const NODE_SIZE   = { STATE: 108, EVENT: 58, FACT: 96, CONCEPT: 38 };
+const RING_GAP    = 70;            // minimum radial gap between rings
+const INNER_R     = 55;            // radius of innermost ring from PERSON center
+
+// ── Visual style ──────────────────────────────────────────────────────────────
+
+const STYLE = {
+  PERSON:  { fill:'#0f2040', stroke:'#3b82f6', text:'#93c5fd' },
+  FACT:    { fill:'#1e0a40', stroke:'#8b5cf6', text:'#c4b5fd' },
+  STATE:   { fill:'#032518', stroke:'#22c55e', text:'#86efac' },
+  EVENT:   { fill:'#2d1000', stroke:'#f97316', text:'#fdba74' },
+  CONCEPT: { fill:'#141e2e', stroke:'#475569', text:'#94a3b8' },
+};
+
+function nodeR(type) {
+  return type === 'PERSON' ? 22 : type === 'CONCEPT' ? 14 : 19;
+}
+
+// ── Concentric layout ─────────────────────────────────────────────────────────
+
+function computeConcentricLayout(nodes, triples) {
+  const persons    = nodes.filter(n => n.node_type === 'PERSON');
+  const nonPersons = nodes.filter(n => n.node_type !== 'PERSON');
+
+  // Place PERSON nodes horizontally, centred around origin
+  const pos = {};
+  const personCenters = {};
+  const totalW = PERSON_SEP * (persons.length - 1);
+  persons.forEach((p, i) => {
+    const cx = -totalW / 2 + i * PERSON_SEP;
+    const cy = 0;
+    pos[p.node_id] = { x: cx, y: cy };
+    personCenters[p.node_id] = { x: cx, y: cy };
+  });
+
+  // Multi-source BFS: assign every non-PERSON node to its nearest PERSON
+  const nodePersonMap = {};  // nodeId → personId
+  persons.forEach(p => { nodePersonMap[p.node_id] = p.node_id; });
+  const adj = {};
+  nodes.forEach(n => { adj[n.node_id] = []; });
+  triples.forEach(t => {
+    adj[t.subject_id]?.push(t.object_id);
+    adj[t.object_id]?.push(t.subject_id);
+  });
+  const q = [];
+  persons.forEach(p =>
+    adj[p.node_id].forEach(nid => {
+      if (!nodePersonMap[nid]) { nodePersonMap[nid] = p.node_id; q.push(nid); }
+    })
+  );
+  while (q.length) {
+    const nid = q.shift();
+    adj[nid].forEach(next => {
+      if (!nodePersonMap[next]) { nodePersonMap[next] = nodePersonMap[nid]; q.push(next); }
+    });
+  }
+  // Any node still unassigned → nearest PERSON by index
+  nonPersons.forEach(n => {
+    if (!nodePersonMap[n.node_id] && persons.length)
+      nodePersonMap[n.node_id] = persons[0].node_id;
+  });
+
+  // Group non-PERSON nodes by (person, type)
+  const groups = {};  // personId → { type → [nodeId] }
+  persons.forEach(p => { groups[p.node_id] = {}; });
+  nonPersons.forEach(n => {
+    const pid = nodePersonMap[n.node_id];
+    if (!pid) return;
+    if (!groups[pid][n.node_type]) groups[pid][n.node_type] = [];
+    groups[pid][n.node_type].push(n.node_id);
+  });
+
+  // Sector facing direction for each PERSON (face outward from centroid)
+  const centX = persons.reduce((s, p) => s + personCenters[p.node_id].x, 0) / Math.max(persons.length, 1);
+  const centY = persons.reduce((s, p) => s + personCenters[p.node_id].y, 0) / Math.max(persons.length, 1);
+
+  const ringGuides = [];
+  const angleFrac  = SECTOR / (2 * Math.PI);
+
+  persons.forEach(p => {
+    const cx = personCenters[p.node_id].x;
+    const cy = personCenters[p.node_id].y;
+
+    // Direction PERSON faces (away from centroid, or upward for single person)
+    const faceAngle = persons.length === 1
+      ? -Math.PI / 2
+      : Math.atan2(cy - centY, cx - centX);
+
+    const sectorStart = faceAngle - SECTOR / 2;
+    let currentR = INNER_R;
+
+    TYPE_ORDER.forEach(type => {
+      const typeNodes = groups[p.node_id]?.[type] ?? [];
+      if (!typeNodes.length) return;
+
+      const nSize = NODE_SIZE[type] ?? 60;
+      const minR  = currentR + RING_GAP;
+      const rFromCirc = (typeNodes.length * nSize * 1.2) / (2 * Math.PI * angleFrac);
+      const r = Math.max(minR, rFromCirc);
+      currentR = r;
+
+      // Arc range with a little padding at the ends so nodes don't stack on the sector boundary
+      const padding = typeNodes.length > 1 ? SECTOR * 0.04 : 0;
+      const arcRange = SECTOR - 2 * padding;
+
+      typeNodes.forEach((nodeId, i) => {
+        const t = typeNodes.length > 1 ? i / (typeNodes.length - 1) : 0.5;
+        const angle = sectorStart + padding + t * arcRange;
+        pos[nodeId] = { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+      });
+
+      // Ring guide arc
+      const arcStart = sectorStart + padding;
+      const arcEnd   = sectorStart + SECTOR - padding;
+      ringGuides.push({ cx, cy, r, type, arcStart, arcEnd, stroke: (STYLE[type] || STYLE.CONCEPT).stroke });
+
+      // Add gap before next ring
+      currentR += 20;
+    });
+  });
+
+  // Fallback for any missed node
+  nodes.forEach(n => {
+    if (!pos[n.node_id]) pos[n.node_id] = { x: 0, y: 0 };
+  });
+
+  return { pos, ringGuides, nodePersonMap };
+}
+
+function computeFitViewBox(nodes, padding = 130) {
+  if (!nodes.length) return { x: -700, y: -550, w: 1400, h: 1100 };
+  const xs = nodes.map(n => n.x), ys = nodes.map(n => n.y);
+  return {
+    x: Math.min(...xs) - padding,
+    y: Math.min(...ys) - padding,
+    w: Math.max(...xs) - Math.min(...xs) + padding * 2,
+    h: Math.max(...ys) - Math.min(...ys) + padding * 2,
+  };
+}
+
+// ── Text parsing ───────────────────────────────────────────────────────────────
+
+function parseAnswer(text, nodes) {
+  const sorted = [...nodes].sort((a, b) => b.name.length - a.name.length);
+  let parts = [{ t: 'text', v: text }];
+  for (const node of sorted) {
+    const next = [];
+    for (const p of parts) {
+      if (p.t !== 'text') { next.push(p); continue; }
+      const idx = p.v.toLowerCase().indexOf(node.name.toLowerCase());
+      if (idx === -1) { next.push(p); continue; }
+      if (idx > 0) next.push({ t: 'text', v: p.v.slice(0, idx) });
+      next.push({ t: 'node', v: p.v.slice(idx, idx + node.name.length), id: node.node_id });
+      const rest = p.v.slice(idx + node.name.length);
+      if (rest) next.push({ t: 'text', v: rest });
+    }
+    parts = next;
+  }
+  return parts;
+}
+
+// ── SVG ring guide arc ─────────────────────────────────────────────────────────
+
+function RingGuide({ guide }) {
+  const { cx, cy, r, type, arcStart, arcEnd, stroke } = guide;
+  const x1 = cx + r * Math.cos(arcStart), y1 = cy + r * Math.sin(arcStart);
+  const x2 = cx + r * Math.cos(arcEnd),   y2 = cy + r * Math.sin(arcEnd);
+  const large = (arcEnd - arcStart) > Math.PI ? 1 : 0;
+  const d = `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
+  const midAngle = (arcStart + arcEnd) / 2;
+  const labelR   = r + 18;
+  return (
+    <g style={{ pointerEvents: 'none' }}>
+      <path d={d} fill="none" stroke={stroke} strokeWidth={0.8}
+        strokeDasharray="5 9" opacity={0.18} />
+      <text x={cx + labelR * Math.cos(midAngle)} y={cy + labelR * Math.sin(midAngle)}
+        textAnchor="middle" dominantBaseline="middle"
+        fill={stroke} fontSize={8.5} opacity={0.3}
+        style={{ userSelect: 'none', letterSpacing: '0.06em' }}>
+        {type}
+      </text>
+    </g>
+  );
+}
+
+// ── Node shapes ────────────────────────────────────────────────────────────────
+
+function NodeShape({ type, s, selected }) {
+  const sw = selected ? 2.5 : 1.5;
+  if (type === 'PERSON') return <circle r={22} fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
+  if (type === 'FACT')   return <ellipse rx={44} ry={17} fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
+  if (type === 'STATE')  return <rect x={-50} y={-15} width={100} height={30} rx={5} fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
+  if (type === 'EVENT')  return <polygon points="0,-23 26,0 0,23 -26,0" fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
+  return <circle r={15} fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
+}
+
+function GraphNode({ node, selected, dimmed, onMouseDown }) {
+  const s = STYLE[node.node_type] || STYLE.CONCEPT;
+  return (
+    <g transform={`translate(${node.x},${node.y})`}
+       style={{ opacity: dimmed ? 0.12 : 1, cursor: 'grab', transition: 'opacity 0.2s' }}
+       onMouseDown={e => { e.stopPropagation(); onMouseDown(e, node.node_id); }}>
+      {selected && <circle r={38} fill="none" stroke={s.stroke} strokeWidth={1}
+        strokeDasharray="4 3" opacity={0.3} />}
+      <NodeShape type={node.node_type} s={s} selected={selected} />
+      <text y={nodeR(node.node_type) + 14} textAnchor="middle"
+        fill={s.text} fontSize={10} fontFamily="ui-sans-serif,system-ui,sans-serif"
+        fontWeight={selected ? 600 : 400}
+        style={{ userSelect: 'none', pointerEvents: 'none' }}>
+        {node.name}
+      </text>
+    </g>
+  );
+}
+
+function GraphEdge({ triple, srcNode, tgtNode, dimmed, hovered, onHover }) {
+  const dx = (tgtNode.x - srcNode.x) || 0.01;
+  const dy = (tgtNode.y - srcNode.y) || 0.01;
+  const len = Math.sqrt(dx*dx + dy*dy) || 1;
+  function pad(n) {
+    if (n.node_type === 'STATE') return 55;
+    if (n.node_type === 'FACT')  return 48;
+    return nodeR(n.node_type) + 5;
+  }
+  const x1 = srcNode.x + dx/len * pad(srcNode);
+  const y1 = srcNode.y + dy/len * pad(srcNode);
+  const x2 = tgtNode.x - dx/len * (pad(tgtNode) + 6);
+  const y2 = tgtNode.y - dy/len * (pad(tgtNode) + 6);
+  return (
+    <g style={{ opacity: dimmed ? 0.06 : 1, transition: 'opacity 0.2s' }}>
+      <line x1={x1} y1={y1} x2={x2} y2={y2}
+        stroke={hovered ? '#3b82f6' : '#1e293b'} strokeWidth={hovered ? 2 : 1.5}
+        markerEnd="url(#arrow)"
+        onMouseEnter={() => onHover(triple.triple_id)}
+        onMouseLeave={() => onHover(null)}
+        style={{ cursor: 'default', transition: 'stroke 0.15s' }} />
+      {hovered && (
+        <text x={(x1+x2)/2} y={(y1+y2)/2-6} textAnchor="middle"
+          fill="#475569" fontSize={9} fontFamily="ui-sans-serif,system-ui,sans-serif"
+          style={{ pointerEvents: 'none', userSelect: 'none' }}>
+          {triple.predicate.replace(/_/g,' ').toLowerCase()}
+        </text>
+      )}
+    </g>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
+
+function App() {
+  const [nodes, setNodes]       = useState([]);
+  const [triples, setTriples]   = useState([]);
+  const [speakers, setSpeakers] = useState([]);
+  const [graphReady, setGraphReady] = useState(false);
+  const [ringGuides, setRingGuides] = useState([]);
+
+  const [sel, setSel]       = useState(null);
+  const [hl, setHl]         = useState(new Set());
+  const [anchor, setAnchor] = useState(null);
+  const [hovE, setHovE]     = useState(null);
+
+  // ViewBox
+  const [vb, setVb]     = useState({ x:-700, y:-550, w:1400, h:1100 });
+  const vbRef           = useRef({ x:-700, y:-550, w:1400, h:1100 });
+  const svgRef          = useRef(null);
+  const interactRef     = useRef({ type: null });
+  const [activeDrag, setActiveDrag] = useState(false);
+
+  // Layout reset
+  const layoutRef = useRef(null);  // original concentric positions
+  const rafRef    = useRef(null);  // animation frame
+
+  // Build
+  const [building, setBuilding]           = useState(false);
+  const [buildProgress, setBuildProgress] = useState({ current:0, total:0, msg:'' });
+  const [buildError, setBuildError]       = useState('');
+  const [modal, setModal]                 = useState(false);
+  const [maxSessions, setMaxSessions]     = useState(5);
+
+  // Chat
+  const [msgs, setMsgs] = useState([
+    { role:'system', parts:[{ t:'text', v:'Build a memory graph to get started. Click + Add Memory above.' }] }
+  ]);
+  const [input, setInput] = useState('');
+  const [busy, setBusy]   = useState(false);
+  const chatRef = useRef(null);
+
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
+  useEffect(() => { vbRef.current = vb; }, [vb]);
+  useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); }, []);
+
+  useEffect(() => {
+    fetch('/graph').then(r => r.json())
+      .then(d => { if (d.ready) applyGraph(d.graph, d.speakers); })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior:'smooth' });
+  }, [msgs, busy]);
+
+  // Non-passive wheel for zoom
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    function onWheel(e) {
+      e.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const { x, y, w, h } = vbRef.current;
+      const cx = x + (e.clientX - rect.left) * (w / rect.width);
+      const cy = y + (e.clientY - rect.top)  * (h / rect.height);
+      const factor = e.deltaY > 0 ? 1.15 : 1/1.15;
+      const nv = { x: cx-(cx-x)*factor, y: cy-(cy-y)*factor, w:w*factor, h:h*factor };
+      vbRef.current = nv;
+      setVb(nv);
+    }
+    svg.addEventListener('wheel', onWheel, { passive: false });
+    return () => svg.removeEventListener('wheel', onWheel);
+  }, [graphReady]);
+
+  // ── Layout animation ───────────────────────────────────────────────────────
+
+  function animateLayoutFrom(startNodes, endNodes, duration = 1200) {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    const t0 = Date.now();
+    function frame() {
+      const t  = Math.min((Date.now() - t0) / duration, 1);
+      const ea = 1 - Math.pow(1 - t, 4); // ease out quart
+      setNodes(endNodes.map((e, i) => {
+        const s = startNodes[i] ?? e;
+        return { ...e, x: s.x + (e.x - s.x) * ea, y: s.y + (e.y - s.y) * ea };
+      }));
+      if (t < 1) rafRef.current = requestAnimationFrame(frame);
+      else        rafRef.current = null;
+    }
+    rafRef.current = requestAnimationFrame(frame);
+  }
+
+  // ── Apply graph ────────────────────────────────────────────────────────────
+
+  function applyGraph(graphData, spk) {
+    const rawNodes   = graphData.nodes   || [];
+    const rawTriples = graphData.triples || [];
+
+    const { pos, ringGuides: guides, nodePersonMap } = computeConcentricLayout(rawNodes, rawTriples);
+
+    const finalPositions = rawNodes.map(n => ({
+      ...n, x: pos[n.node_id]?.x ?? 0, y: pos[n.node_id]?.y ?? 0,
+    }));
+
+    // Start positions: each node begins at its PERSON center (flies outward)
+    const startPositions = rawNodes.map(n => {
+      const pid = nodePersonMap[n.node_id];
+      const cx  = pid ? (pos[pid]?.x ?? 0) : 0;
+      const cy  = pid ? (pos[pid]?.y ?? 0) : 0;
+      return { ...n, x: cx, y: cy };
+    });
+
+    // Apply initial state (all at person centers)
+    setNodes(startPositions);
+    setTriples(rawTriples);
+    setSpeakers(spk || []);
+    setRingGuides(guides);
+    setGraphReady(true);
+    layoutRef.current = finalPositions;
+
+    // Fit viewBox to final layout
+    const fvb = computeFitViewBox(finalPositions);
+    vbRef.current = fvb;
+    setVb(fvb);
+
+    // Animate outward to ring positions
+    animateLayoutFrom(startPositions, finalPositions, 1100);
+  }
+
+  // ── SVG helpers ────────────────────────────────────────────────────────────
+
+  function screenToSVG(clientX, clientY) {
+    const rect = svgRef.current.getBoundingClientRect();
+    const { x, y, w, h } = vbRef.current;
+    return {
+      x: x + (clientX - rect.left) * (w / rect.width),
+      y: y + (clientY - rect.top)  * (h / rect.height),
+    };
+  }
+
+  // ── Selection ──────────────────────────────────────────────────────────────
+
+  function pickNode(id) {
+    if (sel === id) { setSel(null); setHl(new Set()); setAnchor(null); return; }
+    setSel(id);
+    const connected = new Set([id]);
+    triples.forEach(t => {
+      if (t.subject_id === id) connected.add(t.object_id);
+      if (t.object_id  === id) connected.add(t.subject_id);
+    });
+    setHl(connected);
+    const edge = triples.find(t => (t.subject_id === id || t.object_id === id) && t.source);
+    setAnchor(edge?.source || null);
+  }
+
+  function clearSel() { setSel(null); setHl(new Set()); setAnchor(null); }
+
+  // ── Drag & Pan ─────────────────────────────────────────────────────────────
+
+  function handleNodeMouseDown(e, nodeId) {
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    const pt = screenToSVG(e.clientX, e.clientY);
+    const node = nodes.find(n => n.node_id === nodeId);
+    interactRef.current = {
+      type: 'node', nodeId,
+      offsetX: pt.x - (node?.x ?? 0), offsetY: pt.y - (node?.y ?? 0),
+      moved: false,
+    };
+    setActiveDrag(true);
+    e.preventDefault();
+  }
+
+  function handleSVGMouseDown(e) {
+    interactRef.current = {
+      type: 'pan', startClientX: e.clientX, startClientY: e.clientY,
+      startVb: { ...vbRef.current }, moved: false,
+    };
+    setActiveDrag(true);
+  }
+
+  function handleSVGMouseMove(e) {
+    const d = interactRef.current;
+    if (!d.type) return;
+    d.moved = true;
+    if (d.type === 'node') {
+      const pt = screenToSVG(e.clientX, e.clientY);
+      const nx = pt.x - d.offsetX, ny = pt.y - d.offsetY;
+      setNodes(prev => prev.map(n => n.node_id === d.nodeId ? { ...n, x: nx, y: ny } : n));
+    } else if (d.type === 'pan') {
+      const rect = svgRef.current.getBoundingClientRect();
+      const { w, h } = d.startVb;
+      const dx = (e.clientX - d.startClientX) * (w / rect.width);
+      const dy = (e.clientY - d.startClientY) * (h / rect.height);
+      const nv = { ...d.startVb, x: d.startVb.x - dx, y: d.startVb.y - dy };
+      vbRef.current = nv; setVb(nv);
+    }
+  }
+
+  function handleSVGMouseUp() {
+    const d = interactRef.current;
+    if      (d.type === 'node' && !d.moved) pickNode(d.nodeId);
+    else if (d.type === 'pan'  && !d.moved) clearSel();
+    interactRef.current = { type: null };
+    setActiveDrag(false);
+  }
+
+  function handleSVGDoubleClick() {
+    // Double-click → animate back to original concentric positions
+    if (layoutRef.current) {
+      const current = nodes.map(n => ({ ...n }));
+      animateLayoutFrom(current, layoutRef.current, 800);
+    }
+  }
+
+  // ── Build via SSE ──────────────────────────────────────────────────────────
+
+  function startBuild() {
+    setBuilding(true); setBuildError('');
+    setBuildProgress({ current:0, total:maxSessions, msg:'Starting…' });
+    fetch('/build', {
+      method:'POST', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ source:'demo', max_sessions: maxSessions }),
+    }).then(res => {
+      const reader = res.body.getReader(), decoder = new TextDecoder();
+      let buf = '';
+      function pump() {
+        reader.read().then(({ done, value }) => {
+          if (done) { setBuilding(false); return; }
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n'); buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.type === 'progress') {
+                setBuildProgress({ current:ev.current, total:ev.total, msg:ev.msg });
+              } else if (ev.type === 'done') {
+                applyGraph(ev.graph, ev.speakers);
+                setBuilding(false); setModal(false);
+                setMsgs([{ role:'system', parts:[{ t:'text',
+                  v:`Memory graph ready — ${ev.stats.nodes} nodes, ${ev.stats.triples} edges. Ask me anything.`
+                }] }]);
+              } else if (ev.type === 'error') {
+                setBuildError(ev.msg || 'Build failed'); setBuilding(false);
+              }
+            } catch(_) {}
+          }
+          pump();
+        });
+      }
+      pump();
+    }).catch(e => { setBuildError(e.message); setBuilding(false); });
+  }
+
+  // ── Query ──────────────────────────────────────────────────────────────────
+
+  function sendMessage(text) {
+    if (!text.trim() || busy) return;
+    setInput('');
+    setMsgs(prev => [...prev, { role:'user', parts:[{ t:'text', v:text }] }]);
+    setBusy(true);
+    fetch('/query', {
+      method:'POST', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ question: text }),
+    }).then(r => r.json()).then(data => {
+      setMsgs(prev => [...prev, { role:'assistant', parts: parseAnswer(data.answer, nodes), steps: data.steps }]);
+      setBusy(false);
+    }).catch(e => {
+      setMsgs(prev => [...prev, { role:'assistant', parts:[{ t:'text', v:`Error: ${e.message}` }] }]);
+      setBusy(false);
+    });
+  }
+
+  // ── Derived ────────────────────────────────────────────────────────────────
+
+  const hasSel   = sel !== null;
+  const allTypes = useMemo(() => [...new Set(nodes.map(n => n.node_type))], [nodes]);
+
+  const suggestions = useMemo(() => {
+    if (!speakers.length) return [];
+    const [a, b] = speakers;
+    return [
+      `What does ${a} enjoy?`,
+      b ? `What's ${b}'s situation?` : 'What facts are known?',
+      `What is ${a}'s work or career?`,
+      'How do they know each other?',
+    ];
+  }, [speakers]);
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', height:'100vh',
+      background:'#07070f', color:'#e2e8f0',
+      fontFamily:'ui-sans-serif,system-ui,-apple-system,sans-serif', fontSize:13 }}>
+
+      {/* ── Topbar ── */}
+      <div style={{ height:44, background:'#0b0b18', borderBottom:'1px solid #111827',
+        display:'flex', alignItems:'center', padding:'0 16px', gap:12, flexShrink:0 }}>
+        <span style={{ fontWeight:700, fontSize:14, color:'#f1f5f9', letterSpacing:'0.01em' }}>ConvoMemory</span>
+        <div style={{ width:1, height:18, background:'#1e293b' }} />
+        <span style={{ color:'#334155', fontSize:12 }}>
+          {speakers.length ? speakers.join(' & ') : 'No memory loaded'}
+        </span>
+        {allTypes.length > 0 && (
+          <div style={{ display:'flex', gap:4 }}>
+            {allTypes.map(t => {
+              const s = STYLE[t] || STYLE.CONCEPT;
+              return <span key={t} style={{ fontSize:10, padding:'2px 7px', borderRadius:3,
+                background:s.fill, color:s.text, border:`1px solid ${s.stroke}33`,
+                letterSpacing:'0.04em' }}>{t}</span>;
+            })}
+          </div>
+        )}
+        <div style={{ marginLeft:'auto', display:'flex', gap:12, alignItems:'center' }}>
+          {graphReady && <span style={{ fontSize:11, color:'#1e293b' }}>{nodes.length} nodes · {triples.length} edges</span>}
+          <button onClick={() => setModal(true)} style={{
+            padding:'5px 12px', background:'#0f2040', border:'1px solid #1d4ed855',
+            borderRadius:6, color:'#60a5fa', fontSize:12, cursor:'pointer', transition:'border-color 0.15s' }}
+            onMouseEnter={e=>e.currentTarget.style.borderColor='#3b82f6'}
+            onMouseLeave={e=>e.currentTarget.style.borderColor='#1d4ed855'}>
+            + Add Memory
+          </button>
+        </div>
+      </div>
+
+      {/* ── Graph panel ── */}
+      <div style={{ flex:'0 0 52%', position:'relative', overflow:'hidden',
+        borderBottom:'1px solid #111827', background:'#07070f' }}>
+
+        {!graphReady && !building && (
+          <div style={{ position:'absolute', inset:0, display:'flex', flexDirection:'column',
+            alignItems:'center', justifyContent:'center', gap:12 }}>
+            <div style={{ width:48, height:48, borderRadius:'50%', background:'#0f172a',
+              border:'1px solid #1e293b', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22 }}>🧠</div>
+            <p style={{ color:'#1e293b', fontSize:13 }}>No memory graph yet</p>
+            <button onClick={() => setModal(true)} style={{ padding:'7px 16px', background:'#0f2040',
+              border:'1px solid #1d4ed8', borderRadius:7, color:'#60a5fa', fontSize:12, cursor:'pointer' }}>
+              + Add Memory to begin
+            </button>
+          </div>
+        )}
+
+        {building && (
+          <div style={{ position:'absolute', inset:0, display:'flex', flexDirection:'column',
+            alignItems:'center', justifyContent:'center', gap:16 }}>
+            <div style={{ width:32, height:32, border:'2px solid #1e293b', borderTopColor:'#3b82f6',
+              borderRadius:'50%', animation:'spin 0.8s linear infinite' }} />
+            <p style={{ color:'#334155', fontSize:12 }}>{buildProgress.msg}</p>
+            <div style={{ width:240, height:3, background:'#111827', borderRadius:2 }}>
+              <div style={{ width:`${buildProgress.total>0 ? Math.round(buildProgress.current/buildProgress.total*100) : 0}%`,
+                height:'100%', background:'#3b82f6', borderRadius:2, transition:'width 0.3s ease' }} />
+            </div>
+            <p style={{ color:'#1e293b', fontSize:11 }}>Session {buildProgress.current} / {buildProgress.total}</p>
+          </div>
+        )}
+
+        {graphReady && (
+          <svg ref={svgRef} width="100%" height="100%"
+            viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
+            preserveAspectRatio="xMidYMid meet"
+            style={{ display:'block', cursor: activeDrag ? 'grabbing' : 'grab' }}
+            onMouseDown={handleSVGMouseDown}
+            onMouseMove={handleSVGMouseMove}
+            onMouseUp={handleSVGMouseUp}
+            onMouseLeave={handleSVGMouseUp}
+            onDoubleClick={handleSVGDoubleClick}>
+            <defs>
+              <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <polygon points="0,0 7,3.5 0,7" fill="#1e293b" />
+              </marker>
+            </defs>
+
+            {/* Ring guide arcs (drawn below everything) */}
+            {ringGuides.map((g, i) => <RingGuide key={i} guide={g} />)}
+
+            {/* Edges */}
+            {triples.map(t => {
+              const src = nodes.find(n => n.node_id === t.subject_id);
+              const tgt = nodes.find(n => n.node_id === t.object_id);
+              if (!src || !tgt) return null;
+              const dimmed = hasSel && !hl.has(t.subject_id) && !hl.has(t.object_id);
+              return <GraphEdge key={t.triple_id} triple={t} srcNode={src} tgtNode={tgt}
+                dimmed={dimmed} hovered={hovE === t.triple_id} onHover={setHovE} />;
+            })}
+
+            {/* Nodes */}
+            {nodes.map(n => (
+              <GraphNode key={n.node_id} node={n}
+                selected={sel === n.node_id}
+                dimmed={hasSel && !hl.has(n.node_id)}
+                onMouseDown={handleNodeMouseDown} />
+            ))}
+          </svg>
+        )}
+
+        {/* Legend */}
+        {graphReady && (
+          <div style={{ position:'absolute', bottom:8, right:10,
+            display:'flex', gap:10, opacity:0.4, pointerEvents:'none' }}>
+            {Object.entries(STYLE).map(([t, s]) => (
+              <div key={t} style={{ display:'flex', alignItems:'center', gap:3 }}>
+                <div style={{ width:7, height:7, borderRadius:'50%', background:s.stroke }} />
+                <span style={{ fontSize:9, color:s.text }}>{t}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {graphReady && (
+          <div style={{ position:'absolute', top:9, left:13, fontSize:10,
+            color:'#1a2540', userSelect:'none', pointerEvents:'none' }}>
+            drag nodes · pan · scroll to zoom · dbl-click to reset layout
+          </div>
+        )}
+      </div>
+
+      {/* ── Anchor bar ── */}
+      <div style={{ height: anchor ? 54 : 0, flexShrink:0, overflow:'hidden',
+        transition:'height 0.22s cubic-bezier(0.4,0,0.2,1)',
+        background:'#0c0c1e', borderBottom: anchor ? '1px solid #111827' : 'none',
+        display:'flex', alignItems:'center', padding:'0 16px', gap:10 }}>
+        {anchor && <>
+          <span style={{ fontSize:10, opacity:0.5 }}>📍</span>
+          <span style={{ fontSize:11, color:'#3b82f6', whiteSpace:'nowrap' }}>Session {anchor.session_num}</span>
+          <span style={{ fontSize:10, color:'#1e293b', whiteSpace:'nowrap' }}>{anchor.date}</span>
+          <div style={{ width:1, height:14, background:'#161628', flexShrink:0 }} />
+          <span style={{ fontSize:11, color:'#334155', whiteSpace:'nowrap' }}>{anchor.speaker}:</span>
+          <span style={{ fontSize:12, color:'#4a5568', fontStyle:'italic',
+            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', flex:1 }}>
+            {anchor.text}
+          </span>
+        </>}
+      </div>
+
+      {/* ── Chat panel ── */}
+      <div style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>
+        <div ref={chatRef} style={{ flex:1, overflowY:'auto', padding:'12px 16px',
+          display:'flex', flexDirection:'column', gap:8 }}>
+          {msgs.map((msg, i) => (
+            <div key={i} style={{ display:'flex',
+              justifyContent: msg.role==='user' ? 'flex-end' : 'flex-start',
+              alignItems:'flex-end', gap:6 }}>
+              {msg.role !== 'user' && (
+                <div style={{ width:24, height:24, borderRadius:'50%', background:'#0f172a',
+                  border:'1px solid #111827', display:'flex', alignItems:'center',
+                  justifyContent:'center', fontSize:11, flexShrink:0, marginBottom:1 }}>🧠</div>
+              )}
+              <div style={{ maxWidth:'76%', padding:'8px 13px', lineHeight:1.6,
+                borderRadius: msg.role==='user' ? '12px 12px 3px 12px' : '3px 12px 12px 12px',
+                background: msg.role==='user' ? '#0f2040' : '#0c0c1e',
+                border:`1px solid ${msg.role==='user' ? '#1d4ed822' : '#111827'}`, color:'#c8d3e0' }}>
+                {msg.parts.map((p, j) => p.t === 'node' ? (
+                  <span key={j} onClick={() => p.id && pickNode(p.id)}
+                    style={{ color:'#60a5fa', borderBottom:'1px dotted #3b82f644',
+                      cursor: p.id ? 'pointer' : 'default', transition:'color 0.1s' }}
+                    onMouseEnter={e => e.currentTarget.style.color='#93c5fd'}
+                    onMouseLeave={e => e.currentTarget.style.color='#60a5fa'}>{p.v}</span>
+                ) : <span key={j}>{p.v}</span>)}
+              </div>
+            </div>
+          ))}
+          {busy && (
+            <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+              <div style={{ width:24, height:24, borderRadius:'50%', background:'#0f172a',
+                border:'1px solid #111827', display:'flex', alignItems:'center',
+                justifyContent:'center', fontSize:11 }}>🧠</div>
+              <div style={{ padding:'8px 14px', background:'#0c0c1e', border:'1px solid #111827',
+                borderRadius:'3px 12px 12px 12px', color:'#1e293b', letterSpacing:3,
+                animation:'pulse 1.2s ease infinite' }}>···</div>
+            </div>
+          )}
+        </div>
+
+        {suggestions.length > 0 && (
+          <div style={{ padding:'0 16px 7px', display:'flex', gap:5, flexWrap:'wrap' }}>
+            {suggestions.map((s, i) => (
+              <button key={i} onClick={() => sendMessage(s)} style={{
+                fontSize:11, padding:'4px 10px', borderRadius:12, background:'transparent',
+                border:'1px solid #111827', color:'#334155', cursor:'pointer', transition:'all 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor='#1e293b'; e.currentTarget.style.color='#64748b'; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor='#111827'; e.currentTarget.style.color='#334155'; }}>
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div style={{ padding:'4px 16px 14px', display:'flex', gap:8 }}>
+          <input value={input} onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key==='Enter' && sendMessage(input)}
+            placeholder={graphReady ? `Ask about ${speakers.join(' and ')}…` : 'Build a memory graph first…'}
+            disabled={!graphReady}
+            style={{ flex:1, padding:'9px 14px', borderRadius:8, background:'#0b0b18',
+              border:'1px solid #111827', color:'#e2e8f0', fontSize:13, outline:'none',
+              transition:'border-color 0.15s', opacity: graphReady ? 1 : 0.4 }}
+            onFocus={e => e.target.style.borderColor='#1d4ed8'}
+            onBlur={e  => e.target.style.borderColor='#111827'} />
+          <button onClick={() => sendMessage(input)} disabled={!input.trim() || busy || !graphReady}
+            style={{ width:40, borderRadius:8, fontSize:16, display:'flex', alignItems:'center', justifyContent:'center',
+              background: input.trim()&&!busy&&graphReady ? '#1d4ed8' : '#0b0b18',
+              border:`1px solid ${input.trim()&&!busy&&graphReady ? '#1d4ed8' : '#111827'}`,
+              color: input.trim()&&!busy&&graphReady ? '#fff' : '#1e293b',
+              cursor: input.trim()&&!busy&&graphReady ? 'pointer' : 'default',
+              transition:'all 0.15s' }}>↑</button>
+        </div>
+      </div>
+
+      {/* ── Modal ── */}
+      {modal && (
+        <div onClick={() => !building && setModal(false)} style={{
+          position:'fixed', inset:0, background:'#00000099', zIndex:100,
+          display:'flex', alignItems:'center', justifyContent:'center' }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background:'#0c0c1e', border:'1px solid #1e293b', borderRadius:12,
+            padding:24, width:420, maxWidth:'90vw' }}>
+            <div style={{ fontWeight:600, fontSize:14, marginBottom:4, color:'#f1f5f9' }}>Add conversation memory</div>
+            <div style={{ color:'#334155', fontSize:12, marginBottom:20 }}>
+              The agent will extract entities, facts, events and states from your conversation
+              and build a queryable knowledge graph.
+            </div>
+            <div style={{ background:'#07070f', border:'1px solid #1e293b', borderRadius:8, padding:'14px 16px', marginBottom:12 }}>
+              <div style={{ fontSize:12, fontWeight:600, color:'#94a3b8', marginBottom:10 }}>
+                LoCoMo demo <span style={{ fontWeight:400, color:'#334155' }}>· Caroline &amp; Melanie · 19 sessions available</span>
+              </div>
+              <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                <span style={{ fontSize:11, color:'#475569', whiteSpace:'nowrap' }}>Sessions:</span>
+                <input type="range" min={1} max={19} value={maxSessions}
+                  onChange={e => setMaxSessions(Number(e.target.value))}
+                  style={{ flex:1, accentColor:'#3b82f6' }} />
+                <span style={{ fontSize:12, color:'#60a5fa', width:14, textAlign:'right' }}>{maxSessions}</span>
+              </div>
+              <div style={{ fontSize:10, color:'#1e293b', marginTop:6 }}>
+                ~{maxSessions*15}s build time · {Math.round(maxSessions*4)} nodes estimated
+              </div>
+            </div>
+            {building && (
+              <div style={{ margin:'12px 0', padding:'12px 14px', background:'#07070f',
+                border:'1px solid #111827', borderRadius:8 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+                  <div style={{ width:14, height:14, border:'2px solid #1e293b', borderTopColor:'#3b82f6',
+                    borderRadius:'50%', animation:'spin 0.8s linear infinite', flexShrink:0 }} />
+                  <span style={{ fontSize:11, color:'#475569' }}>{buildProgress.msg}</span>
+                </div>
+                <div style={{ height:2, background:'#111827', borderRadius:1 }}>
+                  <div style={{ width:`${buildProgress.total>0 ? Math.round(buildProgress.current/buildProgress.total*100) : 0}%`,
+                    height:'100%', background:'#3b82f6', borderRadius:1, transition:'width 0.3s ease' }} />
+                </div>
+              </div>
+            )}
+            {buildError && (
+              <div style={{ fontSize:11, color:'#f87171', marginBottom:12, padding:'8px 12px',
+                background:'#1c0a0a', borderRadius:6, border:'1px solid #7f1d1d' }}>{buildError}</div>
+            )}
+            <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:4 }}>
+              <button onClick={() => setModal(false)} disabled={building} style={{
+                padding:'7px 14px', borderRadius:6, background:'transparent',
+                border:'1px solid #1e293b', color: building ? '#1e293b' : '#475569',
+                cursor: building ? 'default' : 'pointer' }}>Cancel</button>
+              <button onClick={startBuild} disabled={building} style={{
+                padding:'7px 18px', borderRadius:6,
+                background: building ? '#0f2040' : '#1d4ed8',
+                border:`1px solid ${building ? '#1e293b' : '#1d4ed8'}`,
+                color: building ? '#334155' : '#fff',
+                cursor: building ? 'default' : 'pointer', fontWeight:500 }}>
+                {building ? 'Building…' : 'Build Memory'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
