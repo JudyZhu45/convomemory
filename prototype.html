@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ConvoMemory</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="colors_and_type.css"/>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -29,24 +32,30 @@ const { useState, useEffect, useRef, useMemo } = React;
 const PERSON_SEP  = 1100;          // horizontal gap between PERSON hubs
 const SECTOR_DEG  = 300;           // degrees each PERSON's cluster fans out
 const SECTOR      = SECTOR_DEG * Math.PI / 180;
-const TYPE_ORDER  = ['STATE', 'EVENT', 'FACT', 'CONCEPT'];
+const TYPE_ORDER  = ['STATE', 'EVENT', 'FACT', 'ANIMAL', 'LOCATION', 'CONCEPT'];
 // Approx rendered width/height of each node type (for radius calculation)
-const NODE_SIZE   = { STATE: 108, EVENT: 58, FACT: 96, CONCEPT: 38 };
+const NODE_SIZE   = { STATE: 108, EVENT: 58, FACT: 96, ANIMAL: 80, LOCATION: 80, CONCEPT: 38 };
 const RING_GAP    = 70;            // minimum radial gap between rings
 const INNER_R     = 55;            // radius of innermost ring from PERSON center
 
 // ── Visual style ──────────────────────────────────────────────────────────────
 
 const STYLE = {
-  PERSON:  { fill:'#0f2040', stroke:'#3b82f6', text:'#93c5fd' },
-  FACT:    { fill:'#1e0a40', stroke:'#8b5cf6', text:'#c4b5fd' },
-  STATE:   { fill:'#032518', stroke:'#22c55e', text:'#86efac' },
-  EVENT:   { fill:'#2d1000', stroke:'#f97316', text:'#fdba74' },
-  CONCEPT: { fill:'#141e2e', stroke:'#475569', text:'#94a3b8' },
+  PERSON:   { fill:'#0f2040', stroke:'#3b82f6', text:'#93c5fd' },
+  FACT:     { fill:'#1e0a40', stroke:'#8b5cf6', text:'#c4b5fd' },
+  STATE:    { fill:'#032518', stroke:'#22c55e', text:'#86efac' },
+  EVENT:    { fill:'#2d1000', stroke:'#f97316', text:'#fdba74' },
+  ANIMAL:   { fill:'#1a1000', stroke:'#f59e0b', text:'#fcd34d' },
+  LOCATION: { fill:'#001a1f', stroke:'#06b6d4', text:'#67e8f9' },
+  CONCEPT:  { fill:'#141e2e', stroke:'#475569', text:'#94a3b8' },
 };
 
 function nodeR(type) {
-  return type === 'PERSON' ? 22 : type === 'CONCEPT' ? 14 : 19;
+  if (type === 'PERSON') return 22;
+  if (type === 'ANIMAL') return 18;
+  if (type === 'CONCEPT') return 14;
+  if (type === 'LOCATION') return 16;
+  return 19;
 }
 
 // ── Concentric layout ─────────────────────────────────────────────────────────
@@ -220,21 +229,27 @@ function RingGuide({ guide }) {
 
 function NodeShape({ type, s, selected }) {
   const sw = selected ? 2.5 : 1.5;
-  if (type === 'PERSON') return <circle r={22} fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
-  if (type === 'FACT')   return <ellipse rx={44} ry={17} fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
-  if (type === 'STATE')  return <rect x={-50} y={-15} width={100} height={30} rx={5} fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
-  if (type === 'EVENT')  return <polygon points="0,-23 26,0 0,23 -26,0" fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
+  if (type === 'PERSON')   return <circle r={22} fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
+  if (type === 'FACT')     return <ellipse rx={44} ry={17} fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
+  if (type === 'STATE')    return <rect x={-50} y={-15} width={100} height={30} rx={5} fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
+  if (type === 'EVENT')    return <polygon points="0,-23 26,0 0,23 -26,0" fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
+  if (type === 'ANIMAL')   return <polygon points="0,-20 20,-8 12,18 -12,18 -20,-8" fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
+  if (type === 'LOCATION') return <rect x={-38} y={-14} width={76} height={28} rx={14} fill={s.fill} stroke={s.stroke} strokeWidth={sw} strokeDasharray="4 2" />;
   return <circle r={15} fill={s.fill} stroke={s.stroke} strokeWidth={sw} />;
 }
 
 function GraphNode({ node, selected, dimmed, cited, traceState, onMouseDown }) {
-  const s = STYLE[node.node_type] || STYLE.CONCEPT;
+  const isSuperseded = node.node_type === 'STATE' && node.is_current === false;
+  // Superseded STATE: muted grey style
+  const s = isSuperseded
+    ? { fill:'#111214', stroke:'#475569', text:'#64748b' }
+    : (STYLE[node.node_type] || STYLE.CONCEPT);
   const r = nodeR(node.node_type);
   // During trace, dim nodes not in trace path
   const traceDim = traceState === null && dimmed === false;
   return (
     <g transform={`translate(${node.x},${node.y})`}
-       style={{ opacity: dimmed ? 0.12 : traceDim ? 0.18 : 1,
+       style={{ opacity: dimmed ? 0.12 : traceDim ? 0.18 : isSuperseded ? 0.45 : 1,
                 cursor: 'grab', transition: 'opacity 0.25s' }}
        onMouseDown={e => { e.stopPropagation(); onMouseDown(e, node.node_id); }}>
       {/* L2: trace focused ring — animated pulse */}
@@ -250,6 +265,9 @@ function GraphNode({ node, selected, dimmed, cited, traceState, onMouseDown }) {
       {selected && <circle r={38} fill="none" stroke={s.stroke} strokeWidth={1}
         strokeDasharray="4 3" opacity={0.3} />}
       <NodeShape type={node.node_type} s={s} selected={selected} />
+      {/* Strikethrough line for superseded STATE nodes */}
+      {isSuperseded && <line x1={-46} y1={0} x2={46} y2={0}
+        stroke="#475569" strokeWidth={1.5} opacity={0.7} />}
       <text y={r + 14} textAnchor="middle"
         fill={traceState === 'focused' ? '#fff' : cited ? '#86efac' : s.text}
         fontSize={10} fontFamily="ui-sans-serif,system-ui,sans-serif"
@@ -293,6 +311,208 @@ function GraphEdge({ triple, srcNode, tgtNode, dimmed, hovered, onHover }) {
   );
 }
 
+// ── Eval Pane ─────────────────────────────────────────────────────────────────
+
+const CAT_NAMES = {0:'All', 1:'Single-hop', 2:'Temporal', 3:'Causal', 4:'Multi-hop', 5:'Other'};
+const CAT_COLORS = {1:'#3b82f6', 2:'#f97316', 3:'#8b5cf6', 4:'#22c55e', 5:'#64748b'};
+
+function ScoreBadge({ score }) {
+  const pct = Math.round(score * 100);
+  const color = score >= 0.5 ? '#22c55e' : score >= 0.25 ? '#f97316' : '#ef4444';
+  return (
+    <span style={{ fontSize:10, padding:'2px 7px', borderRadius:10,
+      background: color+'22', color, border:`1px solid ${color}44`, flexShrink:0 }}>
+      F1 {pct}%
+    </span>
+  );
+}
+
+function EvalPane({ qaList, evalFilter, setEvalFilter, evalResults, evalRunning, evalProgress, onRun, onStop }) {
+  const filtered = evalFilter === 0 ? qaList : qaList.filter(q => q.category === evalFilter);
+  const resultVals = Object.values(evalResults);
+  const tested = resultVals.length;
+  const avgF1 = tested ? resultVals.reduce((s, r) => s + r.score, 0) / tested : 0;
+  const passRate = tested ? resultVals.filter(r => r.score >= 0.5).length / tested : 0;
+  const catCounts = qaList.reduce((acc, q) => { acc[q.category] = (acc[q.category]||0)+1; return acc; }, {});
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', height:'100%', minHeight:0 }}>
+      {/* Stats bar */}
+      <div style={{ padding:'8px 16px', borderBottom:'1px solid #111827', display:'flex', gap:16,
+        alignItems:'center', flexShrink:0 }}>
+        <span style={{ fontSize:11, color:'#475569' }}>{tested} / {qaList.length} tested</span>
+        {tested > 0 && <>
+          <span style={{ fontSize:11, color:'#60a5fa' }}>Avg F1: {(avgF1*100).toFixed(0)}%</span>
+          <span style={{ fontSize:11, color: passRate >= 0.5 ? '#22c55e' : '#f97316' }}>
+            Pass ≥50%: {(passRate*100).toFixed(0)}%
+          </span>
+        </>}
+        {evalRunning && (
+          <span style={{ fontSize:11, color:'#334155', marginLeft:'auto' }}>
+            <span style={{ display:'inline-block', animation:'spin 0.8s linear infinite', marginRight:4 }}>⟳</span>
+            {evalProgress.current}/{evalProgress.total}
+          </span>
+        )}
+      </div>
+
+      {/* Category filter */}
+      <div style={{ padding:'6px 16px', borderBottom:'1px solid #111827', display:'flex', gap:4,
+        flexWrap:'wrap', flexShrink:0 }}>
+        {[0,1,2,3,4,5].map(c => (
+          <button key={c} onClick={() => setEvalFilter(c)} style={{
+            padding:'2px 9px', fontSize:10, borderRadius:10, cursor:'pointer',
+            background: evalFilter===c ? (CAT_COLORS[c]||'#1d4ed8')+'22' : 'transparent',
+            border:`1px solid ${evalFilter===c ? (CAT_COLORS[c]||'#1d4ed8') : '#1e293b'}`,
+            color: evalFilter===c ? (CAT_COLORS[c]||'#60a5fa') : '#334155' }}>
+            {CAT_NAMES[c]}{c > 0 && catCounts[c] ? ` (${catCounts[c]})` : ''}
+          </button>
+        ))}
+      </div>
+
+      {/* Run controls */}
+      <div style={{ padding:'6px 16px', borderBottom:'1px solid #111827', display:'flex', gap:6,
+        alignItems:'center', flexShrink:0 }}>
+        {evalRunning ? (
+          <>
+            <div style={{ flex:1, height:3, background:'#111827', borderRadius:2 }}>
+              <div style={{ width:`${evalProgress.total ? evalProgress.current/evalProgress.total*100 : 0}%`,
+                height:'100%', background:'#3b82f6', borderRadius:2, transition:'width 0.3s' }} />
+            </div>
+            <button onClick={onStop} style={{ padding:'4px 12px', fontSize:11, borderRadius:6,
+              background:'#1c0a0a', border:'1px solid #7f1d1d', color:'#f87171', cursor:'pointer' }}>
+              Stop
+            </button>
+          </>
+        ) : (
+          <>
+            <button onClick={() => onRun(filtered.slice(0, 20))} disabled={!qaList.length}
+              style={{ padding:'4px 12px', fontSize:11, borderRadius:6, cursor: qaList.length ? 'pointer' : 'default',
+                background:'#0f172a', border:'1px solid #1e293b', color: qaList.length ? '#60a5fa' : '#1e293b' }}>
+              Run 20
+            </button>
+            <button onClick={() => onRun(filtered)} disabled={!qaList.length}
+              style={{ padding:'4px 12px', fontSize:11, borderRadius:6, cursor: qaList.length ? 'pointer' : 'default',
+                background:'#0f172a', border:'1px solid #1e293b', color: qaList.length ? '#93c5fd' : '#1e293b' }}>
+              Run {filtered.length > 0 ? `all ${filtered.length}` : 'filtered'}
+            </button>
+            {tested > 0 && (
+              <button onClick={() => onRun(filtered.filter(q => !evalResults[q.idx]))}
+                disabled={filtered.every(q => evalResults[q.idx])}
+                style={{ padding:'4px 12px', fontSize:11, borderRadius:6, cursor:'pointer',
+                  background:'transparent', border:'1px solid #1e293b', color:'#334155' }}>
+                Run untested
+              </button>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* QA list */}
+      <div style={{ flex:1, overflowY:'auto', padding:'8px 12px', display:'flex', flexDirection:'column', gap:6 }}>
+        {filtered.length === 0 && (
+          <div style={{ color:'#1e293b', fontSize:12, textAlign:'center', paddingTop:32 }}>
+            {qaList.length === 0 ? 'Build a demo graph to load QA pairs.' : 'No questions in this category.'}
+          </div>
+        )}
+        {filtered.map(q => {
+          const r = evalResults[q.idx];
+          return (
+            <div key={q.idx} style={{ padding:'9px 12px', borderRadius:7,
+              background: r ? (r.score >= 0.5 ? '#031a0a' : r.score >= 0.25 ? '#140d00' : '#130505') : '#07070f',
+              border:`1px solid ${r ? (r.score >= 0.5 ? '#14532d' : r.score >= 0.25 ? '#431407' : '#450a0a') : '#0f172a'}` }}>
+              <div style={{ display:'flex', gap:6, alignItems:'flex-start', marginBottom: r ? 5 : 0 }}>
+                <span style={{ fontSize:9, padding:'2px 6px', borderRadius:3, flexShrink:0, marginTop:1,
+                  background:(CAT_COLORS[q.category]||'#475569')+'22',
+                  color: CAT_COLORS[q.category]||'#64748b',
+                  border:`1px solid ${(CAT_COLORS[q.category]||'#475569')}33` }}>
+                  {CAT_NAMES[q.category]}
+                </span>
+                <span style={{ fontSize:12, color:'#c8d3e0', lineHeight:1.5 }}>{q.question}</span>
+              </div>
+              <div style={{ fontSize:11, color:'#334155', marginBottom: r ? 4 : 0 }}>
+                Expected: <span style={{ color:'#64748b' }}>{q.answer}</span>
+              </div>
+              {r && (
+                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  <span style={{ fontSize:11, color:'#475569', flex:1 }}>
+                    Got: <span style={{ color: r.score >= 0.5 ? '#86efac' : r.score >= 0.25 ? '#fdba74' : '#fca5a5' }}>
+                      {r.got}
+                    </span>
+                  </span>
+                  <ScoreBadge score={r.score} />
+                </div>
+              )}
+              {evalRunning && !r && evalProgress.current < evalProgress.total && (
+                <div style={{ fontSize:10, color:'#1e293b', fontStyle:'italic' }}>queued…</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Timeline View ─────────────────────────────────────────────────────────────
+
+function TimelineView({ data, onPickNode }) {
+  const PRED_LABEL = {
+    HAS_STATE:'has state', HAS_FACT:'has fact', PARTICIPATED_IN:'participated in',
+    ORGANIZED:'organized', KNOWS:'knows', RELATED_TO:'related to',
+    SUPERSEDED_BY:'superseded by',
+  };
+  return (
+    <div style={{ height:'100%', overflowY:'auto', padding:'16px 20px',
+      fontFamily:'"Inter Tight",ui-sans-serif,sans-serif' }}>
+      {data.length === 0 && (
+        <div style={{ color:'#1e293b', fontSize:13, paddingTop:40, textAlign:'center' }}>
+          No timeline data — triples missing session source info.
+        </div>
+      )}
+      {data.map(sess => (
+        <div key={sess.session_num} style={{ marginBottom:20 }}>
+          <div style={{ fontSize:11, fontWeight:600, color:'#334155', letterSpacing:'0.05em',
+            marginBottom:8, display:'flex', alignItems:'center', gap:8 }}>
+            <span style={{ background:'#0f172a', border:'1px solid #1e293b', borderRadius:4,
+              padding:'2px 8px', color:'#475569' }}>Session {sess.session_num}</span>
+            {sess.date && <span style={{ color:'#1e293b' }}>{sess.date}</span>}
+          </div>
+          {sess.events.map((ev, i) => {
+            const subjStyle = STYLE[ev.subject.node_type] || STYLE.CONCEPT;
+            const objStyle  = STYLE[ev.object.node_type]  || STYLE.CONCEPT;
+            const isSuperseded = ev.predicate === 'SUPERSEDED_BY';
+            return (
+              <div key={i} style={{ display:'flex', alignItems:'center', gap:6,
+                padding:'5px 8px', borderRadius:5, marginBottom:3,
+                background: isSuperseded ? '#0d0d1a' : '#07070f',
+                border:'1px solid #0f172a', fontSize:11 }}>
+                <span onClick={() => onPickNode(ev.subject.node_id)}
+                  style={{ color:subjStyle.text, cursor:'pointer', borderBottom:`1px dotted ${subjStyle.stroke}44` }}>
+                  {ev.subject.name}
+                </span>
+                <span style={{ color:'#1e293b', flexShrink:0 }}>
+                  {isSuperseded ? '→' : (PRED_LABEL[ev.predicate] || ev.predicate.toLowerCase().replace(/_/g,' '))}
+                </span>
+                <span onClick={() => onPickNode(ev.object.node_id)}
+                  style={{ color: isSuperseded ? '#475569' : objStyle.text, cursor:'pointer',
+                    textDecoration: isSuperseded ? 'line-through' : 'none',
+                    borderBottom: isSuperseded ? 'none' : `1px dotted ${objStyle.stroke}44` }}>
+                  {ev.object.name}
+                </span>
+                {ev.speaker && (
+                  <span style={{ marginLeft:'auto', color:'#1e293b', fontStyle:'italic', flexShrink:0 }}>
+                    {ev.speaker}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 
 function App() {
@@ -333,6 +553,22 @@ function App() {
   const [buildError, setBuildError]       = useState('');
   const [modal, setModal]                 = useState(false);
   const [maxSessions, setMaxSessions]     = useState(5);
+  const [uploadTab, setUploadTab]         = useState('demo');
+  const [uploadedSessions, setUploadedSessions] = useState(null);
+  const [uploadStatus, setUploadStatus]   = useState('');   // '' | 'uploading' | 'ready' | 'error'
+  const [uploadMsg, setUploadMsg]         = useState('');
+  const fileInputRef = React.useRef(null);
+  const [demoSamples, setDemoSamples]     = useState([]);
+  const [sampleIdx, setSampleIdx]         = useState(0);
+
+  // Eval
+  const [rightTab, setRightTab]   = useState('chat');   // 'chat' | 'eval'
+  const [qaList, setQaList]       = useState([]);
+  const [evalFilter, setEvalFilter] = useState(0);
+  const [evalResults, setEvalResults] = useState({});   // idx → {expected, got, score, category}
+  const [evalRunning, setEvalRunning] = useState(false);
+  const [evalProgress, setEvalProgress] = useState({ current:0, total:0 });
+  const evalReaderRef = useRef(null);
 
   // Chat
   const [msgs, setMsgs] = useState([
@@ -349,6 +585,9 @@ function App() {
   useEffect(() => {
     fetch('/graph').then(r => r.json())
       .then(d => { if (d.ready) applyGraph(d.graph, d.speakers); })
+      .catch(() => {});
+    fetch('/demo_samples').then(r => r.json())
+      .then(d => { if (d.samples?.length) setDemoSamples(d.samples); })
       .catch(() => {});
   }, []);
 
@@ -419,6 +658,9 @@ function App() {
     setSpeakers(spk || []);
     setRingGuides(guides);
     setGraphReady(true);
+    setSearchQ('');
+    setTypeFilters(new Set());
+    setEvalResults({});
     layoutRef.current = finalPositions;
 
     // Fit viewBox to final layout
@@ -521,14 +763,83 @@ function App() {
     }
   }
 
+  // ── Eval ───────────────────────────────────────────────────────────────────
+
+  function loadQA(idx) {
+    fetch(`/qa/${idx}`).then(r => r.json())
+      .then(d => { setQaList(d.qa || []); setEvalResults({}); })
+      .catch(() => {});
+  }
+
+  function runEval(questions) {
+    if (!questions.length) return;
+    setEvalRunning(true);
+    setEvalProgress({ current:0, total: questions.length });
+    fetch('/run_eval', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ questions }),
+    }).then(res => {
+      const reader = res.body.getReader(), decoder = new TextDecoder();
+      evalReaderRef.current = reader;
+      let buf = '';
+      function pump() {
+        reader.read().then(({ done, value }) => {
+          if (done) { setEvalRunning(false); evalReaderRef.current = null; return; }
+          buf += decoder.decode(value, { stream:true });
+          const lines = buf.split('\n'); buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.type === 'result') {
+                setEvalResults(prev => ({ ...prev, [ev.idx]: { expected: ev.expected, got: ev.got, score: ev.score } }));
+                setEvalProgress(ev.progress);
+              } else if (ev.type === 'done' || ev.type === 'error') {
+                setEvalRunning(false); evalReaderRef.current = null;
+              }
+            } catch(_) {}
+          }
+          if (evalReaderRef.current) pump();
+        }).catch(() => { setEvalRunning(false); evalReaderRef.current = null; });
+      }
+      pump();
+    }).catch(() => setEvalRunning(false));
+  }
+
+  function stopEval() {
+    if (evalReaderRef.current) { evalReaderRef.current.cancel(); evalReaderRef.current = null; }
+    setEvalRunning(false);
+  }
+
+  // ── File upload ────────────────────────────────────────────────────────────
+
+  function handleFileUpload(file) {
+    if (!file) return;
+    setUploadStatus('uploading'); setUploadMsg('Parsing file…');
+    const fd = new FormData(); fd.append('file', file);
+    fetch('/upload', { method:'POST', body: fd })
+      .then(r => r.json().then(d => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        if (!ok) { setUploadStatus('error'); setUploadMsg(d.detail || 'Parse failed'); return; }
+        setUploadedSessions(d.sessions);
+        setUploadStatus('ready');
+        setUploadMsg(`${d.session_count} session${d.session_count === 1 ? '' : 's'} parsed from "${file.name}"`);
+      })
+      .catch(e => { setUploadStatus('error'); setUploadMsg(e.message); });
+  }
+
   // ── Build via SSE ──────────────────────────────────────────────────────────
 
   function startBuild() {
     setBuilding(true); setBuildError('');
-    setBuildProgress({ current:0, total:maxSessions, msg:'Starting…' });
+    const isUpload = uploadTab === 'upload' && uploadedSessions;
+    const body = isUpload
+      ? { source:'upload', sessions: uploadedSessions }
+      : { source:'demo', max_sessions: maxSessions, sample_idx: sampleIdx };
+    setBuildProgress({ current:0, total: isUpload ? uploadedSessions.length : maxSessions, msg:'Starting…' });
     fetch('/build', {
       method:'POST', headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ source:'demo', max_sessions: maxSessions }),
+      body: JSON.stringify(body),
     }).then(res => {
       const reader = res.body.getReader(), decoder = new TextDecoder();
       let buf = '';
@@ -549,6 +860,7 @@ function App() {
                 setMsgs([{ role:'system', parts:[{ t:'text',
                   v:`Memory graph ready — ${ev.stats.nodes} nodes, ${ev.stats.triples} edges. Ask me anything.`
                 }] }]);
+                if (uploadTab === 'demo') loadQA(sampleIdx);
               } else if (ev.type === 'error') {
                 setBuildError(ev.msg || 'Build failed'); setBuilding(false);
               }
@@ -570,9 +882,13 @@ function App() {
     setTraceSteps([]); setTraceStep(-1); setTraceAuto(false);
     setMsgs(prev => [...prev, { role:'user', parts:[{ t:'text', v:text }] }]);
     setBusy(true);
+    const history = msgs
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role, content: m.parts.map(p => p.v).join('') }))
+      .slice(-10);
     fetch('/query', {
       method:'POST', headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ question: text }),
+      body: JSON.stringify({ question: text, history }),
     }).then(r => r.json()).then(data => {
       // L1: cited nodes
       const cmap = new Map();
@@ -605,8 +921,40 @@ function App() {
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
+  const [searchQ, setSearchQ]         = useState('');
+  const [typeFilters, setTypeFilters] = useState(new Set());
+  const [viewMode, setViewMode]       = useState('graph');   // 'graph' | 'timeline'
+
   const hasSel   = sel !== null;
   const allTypes = useMemo(() => [...new Set(nodes.map(n => n.node_type))], [nodes]);
+
+  const filteredNodes = useMemo(() => {
+    let r = nodes;
+    if (typeFilters.size > 0) r = r.filter(n => typeFilters.has(n.node_type));
+    if (searchQ.trim()) { const q = searchQ.toLowerCase(); r = r.filter(n => n.name.toLowerCase().includes(q)); }
+    return r;
+  }, [nodes, typeFilters, searchQ]);
+
+  const filteredTriples = useMemo(() => {
+    const vis = new Set(filteredNodes.map(n => n.node_id));
+    return triples.filter(t => vis.has(t.subject_id) && vis.has(t.object_id));
+  }, [filteredNodes, triples]);
+
+  const timelineData = useMemo(() => {
+    const nodeMap = Object.fromEntries(nodes.map(n => [n.node_id, n]));
+    const sessionMap = {};
+    triples.forEach(t => {
+      if (!t.source) return;
+      const sn = t.source.session_num;
+      if (!sessionMap[sn]) sessionMap[sn] = { session_num: sn, date: t.source.date || '', events: [] };
+      const subj = nodeMap[t.subject_id], obj = nodeMap[t.object_id];
+      if (subj && obj) {
+        sessionMap[sn].events.push({ predicate: t.predicate, subject: subj, object: obj,
+          speaker: t.source.speaker || '' });
+      }
+    });
+    return Object.values(sessionMap).sort((a, b) => a.session_num - b.session_num);
+  }, [nodes, triples]);
 
   // Map of node_id → 'focused' | 'visited' for trace replay
   const traceNodeStates = useMemo(() => {
@@ -637,28 +985,61 @@ function App() {
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100vh',
       background:'#07070f', color:'#e2e8f0',
-      fontFamily:'ui-sans-serif,system-ui,-apple-system,sans-serif', fontSize:13 }}>
+      fontFamily:'"Inter Tight",ui-sans-serif,system-ui,-apple-system,sans-serif', fontSize:13 }}>
 
       {/* ── Topbar ── */}
       <div style={{ height:44, background:'#0b0b18', borderBottom:'1px solid #111827',
         display:'flex', alignItems:'center', padding:'0 16px', gap:12, flexShrink:0 }}>
-        <span style={{ fontWeight:700, fontSize:14, color:'#f1f5f9', letterSpacing:'0.01em' }}>ConvoMemory</span>
+        <span style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <span style={{ fontSize:15, lineHeight:1 }}>🧠</span>
+          <span style={{ fontWeight:700, fontSize:14, color:'#f1f5f9', letterSpacing:'0.01em',
+            fontFamily:'"Inter Tight",ui-sans-serif,system-ui,sans-serif' }}>ConvoMemory</span>
+        </span>
         <div style={{ width:1, height:18, background:'#1e293b' }} />
         <span style={{ color:'#334155', fontSize:12 }}>
           {speakers.length ? speakers.join(' & ') : 'No memory loaded'}
         </span>
+        {graphReady && (
+          <input value={searchQ} onChange={e => setSearchQ(e.target.value)}
+            placeholder="Search nodes…"
+            style={{ width:130, padding:'3px 10px', borderRadius:5, background:'#0b0b18',
+              border:'1px solid #111827', color:'#e2e8f0', fontSize:11, outline:'none' }} />
+        )}
         {allTypes.length > 0 && (
           <div style={{ display:'flex', gap:4 }}>
             {allTypes.map(t => {
               const s = STYLE[t] || STYLE.CONCEPT;
-              return <span key={t} style={{ fontSize:10, padding:'2px 7px', borderRadius:3,
-                background:s.fill, color:s.text, border:`1px solid ${s.stroke}33`,
-                letterSpacing:'0.04em' }}>{t}</span>;
+              const active = typeFilters.size === 0 || typeFilters.has(t);
+              return <span key={t} onClick={() => setTypeFilters(prev => {
+                const next = new Set(prev); next.has(t) ? next.delete(t) : next.add(t); return next;
+              })} style={{ fontSize:10, padding:'2px 7px', borderRadius:3, cursor:'pointer',
+                background: active ? s.fill : '#0b0b18',
+                color: active ? s.text : '#334155',
+                border:`1px solid ${active ? s.stroke+'33' : '#111827'}`,
+                letterSpacing:'0.04em', opacity: active ? 1 : 0.5, transition:'all 0.15s' }}>{t}</span>;
             })}
+            {typeFilters.size > 0 && (
+              <span onClick={() => setTypeFilters(new Set())}
+                style={{ fontSize:10, padding:'2px 7px', borderRadius:3, cursor:'pointer',
+                  color:'#64748b', border:'1px solid #1e293b' }}>reset</span>
+            )}
           </div>
         )}
         <div style={{ marginLeft:'auto', display:'flex', gap:12, alignItems:'center' }}>
           {graphReady && <span style={{ fontSize:11, color:'#1e293b' }}>{nodes.length} nodes · {triples.length} edges</span>}
+          {graphReady && (
+            <div style={{ display:'flex', gap:2 }}>
+              {['graph','timeline'].map(m => (
+                <button key={m} onClick={() => setViewMode(m)} style={{
+                  padding:'3px 10px', fontSize:11, borderRadius:5, cursor:'pointer',
+                  background: viewMode===m ? '#0f2040' : 'transparent',
+                  border:`1px solid ${viewMode===m ? '#1d4ed8' : '#1e293b'}`,
+                  color: viewMode===m ? '#60a5fa' : '#334155' }}>
+                  {m==='graph' ? '○ Graph' : '≡ Timeline'}
+                </button>
+              ))}
+            </div>
+          )}
           <button onClick={() => setModal(true)} style={{
             padding:'5px 12px', background:'#0f2040', border:'1px solid #1d4ed855',
             borderRadius:6, color:'#60a5fa', fontSize:12, cursor:'pointer', transition:'border-color 0.15s' }}
@@ -700,7 +1081,11 @@ function App() {
           </div>
         )}
 
-        {graphReady && (
+        {graphReady && viewMode === 'timeline' && (
+          <TimelineView data={timelineData} onPickNode={(id) => { setViewMode('graph'); pickNode(id); }} />
+        )}
+
+        {graphReady && viewMode === 'graph' && (
           <svg ref={svgRef} width="100%" height="100%"
             viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
             preserveAspectRatio="xMidYMid meet"
@@ -720,7 +1105,7 @@ function App() {
             {ringGuides.map((g, i) => <RingGuide key={i} guide={g} />)}
 
             {/* Edges */}
-            {triples.map(t => {
+            {filteredTriples.map(t => {
               const src = nodes.find(n => n.node_id === t.subject_id);
               const tgt = nodes.find(n => n.node_id === t.object_id);
               if (!src || !tgt) return null;
@@ -730,7 +1115,7 @@ function App() {
             })}
 
             {/* Nodes */}
-            {nodes.map(n => {
+            {filteredNodes.map(n => {
               const ts = traceNodeStates.size > 0 ? (traceNodeStates.get(n.node_id) ?? null) : undefined;
               return (
                 <GraphNode key={n.node_id} node={n}
@@ -745,7 +1130,7 @@ function App() {
         )}
 
         {/* Legend */}
-        {graphReady && (
+        {graphReady && viewMode === 'graph' && (
           <div style={{ position:'absolute', bottom:8, right:10,
             display:'flex', gap:10, opacity:0.4, pointerEvents:'none' }}>
             {Object.entries(STYLE).map(([t, s]) => (
@@ -757,7 +1142,7 @@ function App() {
           </div>
         )}
 
-        {graphReady && (
+        {graphReady && viewMode === 'graph' && (
           <div style={{ position:'absolute', top:9, left:13, fontSize:10,
             color:'#1a2540', userSelect:'none', pointerEvents:'none' }}>
             drag nodes · pan · scroll to zoom · dbl-click to reset layout
@@ -848,8 +1233,30 @@ function App() {
         </>}
       </div>
 
-      {/* ── Chat panel ── */}
+      {/* ── Right panel (Chat / Eval) ── */}
       <div style={{ flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>
+
+        {/* Tab bar */}
+        <div style={{ display:'flex', borderBottom:'1px solid #111827', flexShrink:0 }}>
+          {['chat','eval'].map(tab => (
+            <button key={tab} onClick={() => { setRightTab(tab); if (tab==='eval' && qaList.length===0 && graphReady) loadQA(sampleIdx); }}
+              style={{ padding:'7px 18px', fontSize:12, border:'none', borderBottom:`2px solid ${rightTab===tab ? '#3b82f6' : 'transparent'}`,
+                background:'transparent', color: rightTab===tab ? '#60a5fa' : '#334155',
+                cursor:'pointer', fontWeight: rightTab===tab ? 500 : 400, transition:'all 0.15s' }}>
+              {tab==='chat' ? '💬 Chat' : '🧪 Eval'}
+              {tab==='eval' && qaList.length > 0 && (
+                <span style={{ marginLeft:5, fontSize:10, color:'#1e293b' }}>{qaList.length}</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {rightTab === 'eval' ? (
+          <EvalPane qaList={qaList} evalFilter={evalFilter} setEvalFilter={setEvalFilter}
+            evalResults={evalResults} evalRunning={evalRunning} evalProgress={evalProgress}
+            onRun={runEval} onStop={stopEval} />
+        ) : (
+        <div style={{ display:'flex', flexDirection:'column', flex:1, minHeight:0 }}>
         <div ref={chatRef} style={{ flex:1, overflowY:'auto', padding:'12px 16px',
           display:'flex', flexDirection:'column', gap:8 }}>
           {msgs.map((msg, i) => (
@@ -919,6 +1326,9 @@ function App() {
               cursor: input.trim()&&!busy&&graphReady ? 'pointer' : 'default',
               transition:'all 0.15s' }}>↑</button>
         </div>
+        </div>
+        )}
+
       </div>
 
       {/* ── Modal ── */}
@@ -928,27 +1338,83 @@ function App() {
           display:'flex', alignItems:'center', justifyContent:'center' }}>
           <div onClick={e => e.stopPropagation()} style={{
             background:'#0c0c1e', border:'1px solid #1e293b', borderRadius:12,
-            padding:24, width:420, maxWidth:'90vw' }}>
+            padding:24, width:440, maxWidth:'90vw' }}>
             <div style={{ fontWeight:600, fontSize:14, marginBottom:4, color:'#f1f5f9' }}>Add conversation memory</div>
-            <div style={{ color:'#334155', fontSize:12, marginBottom:20 }}>
-              The agent will extract entities, facts, events and states from your conversation
-              and build a queryable knowledge graph.
+            <div style={{ color:'#334155', fontSize:12, marginBottom:16 }}>
+              The agent will extract entities, facts, events and states and build a queryable knowledge graph.
             </div>
-            <div style={{ background:'#07070f', border:'1px solid #1e293b', borderRadius:8, padding:'14px 16px', marginBottom:12 }}>
-              <div style={{ fontSize:12, fontWeight:600, color:'#94a3b8', marginBottom:10 }}>
-                LoCoMo demo <span style={{ fontWeight:400, color:'#334155' }}>· Caroline &amp; Melanie · 19 sessions available</span>
-              </div>
-              <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                <span style={{ fontSize:11, color:'#475569', whiteSpace:'nowrap' }}>Sessions:</span>
-                <input type="range" min={1} max={19} value={maxSessions}
-                  onChange={e => setMaxSessions(Number(e.target.value))}
-                  style={{ flex:1, accentColor:'#3b82f6' }} />
-                <span style={{ fontSize:12, color:'#60a5fa', width:14, textAlign:'right' }}>{maxSessions}</span>
-              </div>
-              <div style={{ fontSize:10, color:'#1e293b', marginTop:6 }}>
-                ~{maxSessions*15}s build time · {Math.round(maxSessions*4)} nodes estimated
-              </div>
+
+            {/* Tabs */}
+            <div style={{ display:'flex', gap:4, marginBottom:14 }}>
+              {['demo','upload'].map(tab => (
+                <button key={tab} onClick={() => setUploadTab(tab)} style={{
+                  padding:'5px 14px', borderRadius:6, fontSize:12, cursor:'pointer',
+                  background: uploadTab===tab ? '#0f2040' : 'transparent',
+                  border: `1px solid ${uploadTab===tab ? '#1d4ed8' : '#1e293b'}`,
+                  color: uploadTab===tab ? '#60a5fa' : '#475569' }}>
+                  {tab==='demo' ? 'Demo data' : 'Upload file'}
+                </button>
+              ))}
             </div>
+
+            {uploadTab === 'demo' ? (
+              <div style={{ background:'#07070f', border:'1px solid #1e293b', borderRadius:8, padding:'14px 16px', marginBottom:12 }}>
+                <div style={{ fontSize:12, fontWeight:600, color:'#94a3b8', marginBottom:10 }}>
+                  LoCoMo demo <span style={{ fontWeight:400, color:'#334155' }}>· 10 conversation pairs available</span>
+                </div>
+                {/* Sample selector */}
+                <div style={{ display:'flex', flexDirection:'column', gap:4, marginBottom:12 }}>
+                  {demoSamples.map(s => (
+                    <div key={s.idx} onClick={() => { setSampleIdx(s.idx); setMaxSessions(Math.min(maxSessions, s.session_count)); }}
+                      style={{ padding:'7px 10px', borderRadius:6, cursor:'pointer', transition:'all 0.15s',
+                        background: sampleIdx === s.idx ? '#0f2040' : 'transparent',
+                        border:`1px solid ${sampleIdx === s.idx ? '#1d4ed855' : '#111827'}` }}>
+                      <span style={{ fontSize:12, color: sampleIdx === s.idx ? '#93c5fd' : '#475569' }}>
+                        {s.speakers.join(' & ')}
+                      </span>
+                      <span style={{ fontSize:10, color:'#1e293b', marginLeft:8 }}>{s.session_count} sessions</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                  <span style={{ fontSize:11, color:'#475569', whiteSpace:'nowrap' }}>Sessions:</span>
+                  <input type="range" min={1} max={demoSamples[sampleIdx]?.session_count || 19} value={maxSessions}
+                    onChange={e => setMaxSessions(Number(e.target.value))}
+                    style={{ flex:1, accentColor:'#3b82f6' }} />
+                  <span style={{ fontSize:12, color:'#60a5fa', width:14, textAlign:'right' }}>{maxSessions}</span>
+                </div>
+                <div style={{ fontSize:10, color:'#1e293b', marginTop:6 }}>
+                  ~{maxSessions*15}s build time · {Math.round(maxSessions*4)} nodes estimated
+                </div>
+              </div>
+            ) : (
+              <div style={{ marginBottom:12 }}>
+                <input type="file" ref={fileInputRef} accept=".json,.txt"
+                  style={{ display:'none' }}
+                  onChange={e => handleFileUpload(e.target.files?.[0])} />
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={e => { e.preventDefault(); handleFileUpload(e.dataTransfer.files?.[0]); }}
+                  style={{ border:'1px dashed #1e293b', borderRadius:8, padding:'20px 16px',
+                    textAlign:'center', cursor:'pointer', background:'#07070f',
+                    transition:'border-color 0.15s' }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor='#3b82f6'}
+                  onMouseLeave={e => e.currentTarget.style.borderColor='#1e293b'}>
+                  <div style={{ fontSize:13, color:'#475569', marginBottom:6 }}>
+                    {uploadStatus==='' ? 'Click or drag & drop a file here' :
+                     uploadStatus==='uploading' ? 'Parsing…' : uploadMsg}
+                  </div>
+                  {uploadStatus==='' && (
+                    <div style={{ fontSize:11, color:'#1e293b' }}>
+                      Supports Claude export JSON · LoCoMo JSON · plain text
+                    </div>
+                  )}
+                  {uploadStatus==='ready' && <div style={{ fontSize:11, color:'#22c55e', marginTop:4 }}>Ready to build</div>}
+                  {uploadStatus==='error' && <div style={{ fontSize:11, color:'#f87171', marginTop:4 }}>Try a different file</div>}
+                </div>
+              </div>
+            )}
             {building && (
               <div style={{ margin:'12px 0', padding:'12px 14px', background:'#07070f',
                 border:'1px solid #111827', borderRadius:8 }}>
@@ -972,7 +1438,7 @@ function App() {
                 padding:'7px 14px', borderRadius:6, background:'transparent',
                 border:'1px solid #1e293b', color: building ? '#1e293b' : '#475569',
                 cursor: building ? 'default' : 'pointer' }}>Cancel</button>
-              <button onClick={startBuild} disabled={building} style={{
+              <button onClick={startBuild} disabled={building || (uploadTab==='upload' && uploadStatus!=='ready')} style={{
                 padding:'7px 18px', borderRadius:6,
                 background: building ? '#0f2040' : '#1d4ed8',
                 border:`1px solid ${building ? '#1e293b' : '#1d4ed8'}`,

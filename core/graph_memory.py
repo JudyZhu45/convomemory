@@ -38,22 +38,28 @@ def _new_id() -> str:
 # ── Node & Triple types (open strings, not Enum) ─────────────────────────────
 
 class NodeType:
-    PERSON  = "PERSON"
-    EVENT   = "EVENT"
-    STATE   = "STATE"   # mutable current condition (identity, goals, plans, relationships)
-    FACT    = "FACT"    # immutable facts, preferences, possessions, memories
-    ORG     = "ORG"
-    CONCEPT = "CONCEPT"
+    PERSON   = "PERSON"
+    ANIMAL   = "ANIMAL"   # named pets/animals — same edge rights as PERSON
+    EVENT    = "EVENT"
+    STATE    = "STATE"    # mutable current condition (identity, goals, plans, relationships)
+    FACT     = "FACT"     # immutable facts, preferences, possessions, memories
+    ORG      = "ORG"
+    LOCATION = "LOCATION" # placeholder — builder produces these via entity grounding
+    CONCEPT  = "CONCEPT"
 
 
 class RelType:
-    PARTICIPATED_IN = "PARTICIPATED_IN"   # person → event (attended/ran/visited)
+    PARTICIPATED_IN = "PARTICIPATED_IN"   # person/animal → event (attended/ran/visited)
     ORGANIZED       = "ORGANIZED"         # person → event (led/hosted/arranged)
-    HAS_STATE       = "HAS_STATE"         # person → state (mutable)
-    HAS_FACT        = "HAS_FACT"          # person → fact (immutable)
+    HAS_STATE       = "HAS_STATE"         # person/animal → state (mutable)
+    HAS_FACT        = "HAS_FACT"          # person/animal → fact (immutable)
     RELATED_TO      = "RELATED_TO"        # person/event → concept/org (general)
     KNOWS           = "KNOWS"             # person → person
     SUPERSEDED_BY   = "SUPERSEDED_BY"     # old state → new state (temporal)
+    INVALIDATED_BY  = "INVALIDATED_BY"    # old state → cause (cascade: indirect dependency)
+    SUPPORTS        = "SUPPORTS"          # FACT/EVENT → STATE: evidence for the state
+    REFINES         = "REFINES"           # STATE → STATE: more specific version
+    REALIZED_BY     = "REALIZED_BY"       # STATE → EVENT: plan/goal actualized
 
 
 # ── EntityNode ────────────────────────────────────────────────────────────────
@@ -74,21 +80,25 @@ class EntityNode:
     node_id:   str
     name:      str
     node_type: str
-    aliases:   set[str]      = field(default_factory=set, repr=False)
-    sessions:  list[int]     = field(default_factory=list)
-    embedding: list[float]   = field(default_factory=list, repr=False)
+    aliases:    set[str]      = field(default_factory=set, repr=False)
+    sessions:   list[int]     = field(default_factory=list)
+    embedding:  list[float]   = field(default_factory=list, repr=False)
+    is_current: bool          = field(default=True)
 
     def add_alias(self, alias: str) -> None:
         self.aliases.add(alias.lower())
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "node_id":   self.node_id,
             "name":      self.name,
             "node_type": self.node_type,
             "aliases":   sorted(self.aliases),
             "sessions":  self.sessions,
         }
+        if not self.is_current:
+            d["is_current"] = False
+        return d
 
 
 # ── Triple ────────────────────────────────────────────────────────────────────
@@ -116,9 +126,10 @@ class Triple:
     dialog_id:   str   = ""
     session_idx: int   = 0
     date:        str   = ""
+    is_valid:    bool  = True
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "triple_id":   self.triple_id,
             "subject_id":  self.subject_id,
             "predicate":   self.predicate,
@@ -127,6 +138,9 @@ class Triple:
             "session_idx": self.session_idx,
             "date":        self.date,
         }
+        if not self.is_valid:
+            d["is_valid"] = False  # only persist when non-default to keep JSON compact
+        return d
 
 
 # ── GraphMemory ───────────────────────────────────────────────────────────────
@@ -219,6 +233,59 @@ class GraphMemory:
         self._adj.setdefault(sid, []).append(triple)
         self._radj.setdefault(oid, []).append(triple)
         return triple
+
+    def supersede_state(
+        self,
+        old_node_id: str,
+        new_node_id: str,
+        dialog_id: str = "",
+        session_idx: int = 0,
+        date: str = "",
+    ) -> Triple:
+        """Mark old state as superseded by new state.
+
+        1. Set old node is_current=False.
+        2. Invalidate all is_valid=True triples pointing AT the old node
+           (except SUPERSEDED_BY edges themselves).
+        3. Add SUPERSEDED_BY edge old → new.
+        """
+        old = self._nodes.get(old_node_id)
+        if old:
+            old.is_current = False
+        for t in self._radj.get(old_node_id, []):
+            if t.is_valid and t.predicate != RelType.SUPERSEDED_BY:
+                t.is_valid = False
+        return self.add_triple(
+            old_node_id,
+            RelType.SUPERSEDED_BY,
+            new_node_id,
+            dialog_id=dialog_id,
+            session_idx=session_idx,
+            date=date,
+        )
+
+    def delete_node(self, node_id: str) -> None:
+        """Physically remove a node and all its edges. Used by FACT→EVENT promotion."""
+        node = self._nodes.pop(node_id, None)
+        if not node:
+            return
+        self._name_idx.pop(node.name.lower(), None)
+        for a in node.aliases:
+            self._alias_idx.pop(a, None)
+        self._triples = [t for t in self._triples
+                         if t.subject_id != node_id and t.object_id != node_id]
+        self._adj.pop(node_id, None)
+        self._radj.pop(node_id, None)
+        for sid in list(self._adj):
+            self._adj[sid] = [t for t in self._adj[sid] if t.object_id != node_id]
+        for oid in list(self._radj):
+            self._radj[oid] = [t for t in self._radj[oid] if t.subject_id != node_id]
+
+    def iter_nodes_by_type(self, types: list[str]):
+        """Yield all nodes whose node_type is in `types`."""
+        for node in self._nodes.values():
+            if node.node_type in types:
+                yield node
 
     def merge_entities(self, keep_id: str, merge_id: str) -> None:
         """Merge merge_id node into keep_id. Rewrites triples, removes merge_id."""
@@ -375,11 +442,15 @@ class GraphMemory:
         nodes: list[EntityNode],
         triples: list[Triple],
         seed_name: str = "",
+        sort_by_session: bool = False,
     ) -> str:
         """Render subgraph as a natural-language context string for LLM input.
 
         Groups triples by subject entity. Literal object_ids (dates, values)
         are rendered directly; node object_ids are resolved to names.
+
+        sort_by_session: when True, sort each entity's triples by session_idx
+        ascending so the LLM sees the temporal progression explicitly.
         """
         if not triples:
             return ""
@@ -390,13 +461,11 @@ class GraphMemory:
             by_subject.setdefault(t.subject_id, []).append(t)
 
         node_map = {n.node_id: n for n in nodes}
-        # Also include all graph nodes for object resolution
         node_map.update(self._nodes)
 
         lines = []
         seed_node = self.find_entity(seed_name) if seed_name else None
 
-        # Seed entity first, then others
         order = []
         if seed_node and seed_node.node_id in by_subject:
             order.append(seed_node.node_id)
@@ -404,13 +473,20 @@ class GraphMemory:
             if nid not in order:
                 order.append(nid)
 
+        _skip_outdated = {RelType.SUPPORTS, RelType.REFINES, RelType.REALIZED_BY}
+
         for nid in order:
             subj_node = node_map.get(nid)
             subj_name = subj_node.name if subj_node else nid
             lines.append(f"[{subj_name}]")
-            for t in by_subject[nid]:
+            triples_for_subj = by_subject[nid]
+            if sort_by_session:
+                triples_for_subj = sorted(triples_for_subj, key=lambda t: t.session_idx)
+            for t in triples_for_subj:
                 obj_node = node_map.get(t.object_id)
                 obj_str = obj_node.name if obj_node else t.object_id
+                if obj_node and not obj_node.is_current and t.predicate not in _skip_outdated:
+                    obj_str += " [outdated]"
                 parts = []
                 if t.dialog_id:
                     parts.append(str(t.dialog_id))
@@ -447,6 +523,7 @@ class GraphMemory:
                 node_type=nd["node_type"],
                 aliases=set(nd.get("aliases", [])),
                 sessions=nd.get("sessions", []),
+                is_current=nd.get("is_current", True),
             )
             g._nodes[node.node_id] = node
             g._name_idx[node.name.lower()] = node.node_id
@@ -461,6 +538,7 @@ class GraphMemory:
                 dialog_id=td.get("dialog_id", ""),
                 session_idx=td.get("session_idx", 0),
                 date=td.get("date", ""),
+                is_valid=td.get("is_valid", True),
             )
             g._triples.append(triple)
             g._adj.setdefault(triple.subject_id, []).append(triple)

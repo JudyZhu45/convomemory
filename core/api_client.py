@@ -73,13 +73,13 @@ class APIClient:
         self.model = model
         self.emb_model = emb_model
 
-    def _call(self, messages: list[dict], max_tokens: int) -> str:
+    def _call(self, messages: list[dict], max_tokens: int, temperature: float = 0.0) -> str:
         import requests
         r = requests.post(
             self._chat_url,
             headers={"Authorization": f"Bearer {self._key}", "Content-Type": "application/json"},
             json={"model": self.model, "messages": messages,
-                  "max_tokens": max_tokens, "temperature": 0.0},
+                  "max_tokens": max_tokens, "temperature": temperature},
             timeout=(10, 120),
         )
         r.raise_for_status()
@@ -100,10 +100,10 @@ class APIClient:
                     time.sleep(1.5 * (attempt + 1))
         return "ERROR: exhausted"
 
-    def gpt(self, system: str, user: str, max_tokens: int = 64) -> str:
+    def gpt(self, system: str, user: str, max_tokens: int = 64, temperature: float = 0.0) -> str:
         msgs = [{"role": "system", "content": system},
                 {"role": "user", "content": user}]
-        return self._retry(self._call, msgs, max_tokens)
+        return self._retry(self._call, msgs, max_tokens, temperature)
 
     def gpt_with_history(self, history: list[dict], user: str, max_tokens: int = 256) -> str:
         msgs = history + [{"role": "user", "content": user}]

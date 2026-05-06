@@ -1,0 +1,226 @@
+/* ConvoMemory Design System — Colors & Typography
+ *
+ * Design tokens extracted from the ConvoMemory prototype + Streamlit app.
+ * Aesthetic: cool near-black backgrounds, very dim borders, vibrant typed
+ * node colors (blue/purple/green/orange/slate), system sans body, monospace
+ * for code/tool tokens.
+ */
+
+:root {
+  /* ─── Base canvas ─────────────────────────────────────────────────────── */
+  --bg-canvas:        #07070f;   /* deepest — graph stage, page background    */
+  --bg-topbar:        #0b0b18;   /* topbar / inputs                            */
+  --bg-panel:         #0c0c1e;   /* chat bubble (assistant), modals, anchor    */
+  --bg-trace:         #08081a;   /* trace replay bar                           */
+
+  /* Streamlit (sidebar/cards) variants — slightly warmer */
+  --bg-streamlit-app: #0e0e1a;
+  --bg-streamlit-card:#1a1a2e;
+
+  /* ─── Borders / dividers ──────────────────────────────────────────────── */
+  --border-faint:     #111827;   /* default panel borders                      */
+  --border-soft:      #1e293b;   /* hover/active borders, dividers, scrollbar  */
+  --border-strong:    #334155;   /* rarely used — focused inputs, key elements */
+
+  /* ─── Foreground / text ───────────────────────────────────────────────── */
+  --fg-primary:       #f1f5f9;   /* h1, brand wordmark                         */
+  --fg-body:          #e2e8f0;   /* body text                                  */
+  --fg-muted:         #c8d3e0;   /* chat message body                          */
+  --fg-dim:           #94a3b8;   /* secondary labels                           */
+  --fg-dimmer:        #64748b;   /* tertiary, hint text                        */
+  --fg-quiet:         #475569;   /* subtle controls                            */
+  --fg-quieter:       #334155;   /* captions, anchor text                      */
+  --fg-ghost:         #1e293b;   /* almost-invisible — node counts, hints      */
+  --fg-ghostly:       #1a2540;   /* graph hint text overlay                    */
+
+  /* ─── Typed node palette (the heart of the brand) ─────────────────────── */
+  /* Each typed entity has fill + stroke + text triplet. Used for nodes in
+   * the graph AND for badges/chips/highlights elsewhere in the UI. */
+
+  --person-fill:      #0f2040;
+  --person-stroke:    #3b82f6;
+  --person-text:      #93c5fd;
+  --person-soft:      #60a5fa;   /* hover, link blue                           */
+  --person-deep:      #1d4ed8;   /* primary action button                      */
+
+  --fact-fill:        #1e0a40;
+  --fact-stroke:      #8b5cf6;
+  --fact-text:        #c4b5fd;
+
+  --state-fill:       #032518;
+  --state-stroke:     #22c55e;
+  --state-text:       #86efac;
+  --state-soft:       #4CAF80;   /* trace 'visited' / cited rings             */
+
+  --event-fill:       #2d1000;
+  --event-stroke:     #f97316;
+  --event-text:       #fdba74;
+  --event-warm:       #F5A623;   /* Streamlit step-box accent                 */
+
+  --concept-fill:     #141e2e;
+  --concept-stroke:   #475569;
+  --concept-text:     #94a3b8;
+
+  /* ─── Functional accents ──────────────────────────────────────────────── */
+  --accent-success:   #27AE60;   /* answer-box border (Streamlit)             */
+  --accent-trace:     #64B5F6;   /* trace 'focused' ring                      */
+  --accent-error:     #ef4444;
+  --accent-error-soft:#f87171;
+  --accent-error-bg:  #1c0a0a;
+  --accent-error-bd:  #7f1d1d;
+  --accent-failed-bg: #3A1E1E;
+  --accent-failed-tx: #E57373;
+
+  /* Streamlit primary blue (used in metric cards) */
+  --accent-streamlit: #4A90D9;
+
+  /* ─── Typography ──────────────────────────────────────────────────────── */
+  --font-sans: "Inter Tight", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* Sizes — the prototype is dense. 10–14 covers most UI; nothing larger
+   * than 22 except the graph 🧠 mark. */
+  --fs-10: 10px;   /* node labels in graph, tiny captions, type chips         */
+  --fs-11: 11px;   /* most chrome text, anchor bar, suggestions               */
+  --fs-12: 12px;   /* secondary labels, button text                          */
+  --fs-13: 13px;   /* body / chat input                                      */
+  --fs-14: 14px;   /* h1 wordmark, modal title                               */
+  --fs-15: 15px;   /* Streamlit tab labels                                   */
+  --fs-16: 16px;   /* answer-box text                                        */
+  --fs-22: 22px;   /* 🧠 mark in empty state                                 */
+
+  /* Weights */
+  --fw-regular: 400;
+  --fw-medium:  500;
+  --fw-semibold:600;
+  --fw-bold:    700;
+
+  /* Letter-spacing */
+  --tracking-tight:  -0.01em;
+  --tracking-normal: 0;
+  --tracking-mark:   0.01em;   /* brand wordmark                            */
+  --tracking-uppr:   0.04em;   /* type-chip uppercase                       */
+  --tracking-rings:  0.06em;   /* ring-guide labels                         */
+
+  /* Line heights */
+  --lh-tight: 1.2;
+  --lh-snug:  1.4;
+  --lh-body:  1.6;            /* chat bubbles                              */
+
+  /* ─── Radii ───────────────────────────────────────────────────────────── */
+  --radius-xs: 2px;            /* progress bars                             */
+  --radius-sm: 3px;            /* type chips, badges                        */
+  --radius-md: 4px;            /* trace controls                            */
+  --radius-lg: 6px;            /* buttons, error boxes                      */
+  --radius-xl: 7px;            /* large action buttons                      */
+  --radius-2xl: 8px;           /* inputs, anchor section                    */
+  --radius-3xl: 12px;          /* modal, chat bubble                        */
+  /* Asymmetric chat bubbles (the brand's signature shape) */
+  --radius-bubble-user: 12px 12px 3px 12px;
+  --radius-bubble-asst: 3px 12px 12px 12px;
+
+  /* ─── Spacing scale ───────────────────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 14px;
+  --space-7: 16px;
+  --space-8: 20px;
+  --space-9: 24px;
+
+  /* ─── Heights / sizes ─────────────────────────────────────────────────── */
+  --h-topbar: 44px;
+  --h-anchor: 54px;
+  --h-trace: 34px;
+  --h-input: 38px;
+  --h-control-sm: 22px;
+  --h-control-md: 26px;
+
+  /* ─── Motion ──────────────────────────────────────────────────────────── */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-instant: 100ms;
+  --dur-fast:    150ms;
+  --dur-base:    220ms;
+  --dur-slow:    300ms;
+  --dur-trace:   900ms;       /* trace step interval                       */
+  --dur-flyout: 1100ms;       /* graph fly-in animation                    */
+
+  /* ─── Strokes / lines (graph) ─────────────────────────────────────────── */
+  --stroke-edge:        #1e293b;
+  --stroke-edge-hover:  #3b82f6;
+  --stroke-ring-dash:   "5 9";       /* ring guide arc dasharray           */
+  --stroke-cited-dash:  "3 4";       /* cited node ring                    */
+  --stroke-selected-dash:"4 3";      /* selected halo                      */
+}
+
+/* ─── Keyframes ─────────────────────────────────────────────────────────── */
+@keyframes pulse      { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
+@keyframes spin       { to { transform: rotate(360deg); } }
+@keyframes tracePulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+
+/* ─── Semantic / element styles ─────────────────────────────────────────── */
+body {
+  background: var(--bg-canvas);
+  color: var(--fg-body);
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  font-weight: var(--fw-regular);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, .h1 {
+  font-size: var(--fs-14);
+  font-weight: var(--fw-bold);
+  color: var(--fg-primary);
+  letter-spacing: var(--tracking-mark);
+}
+
+h2, .h2 {
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+  color: var(--fg-primary);
+  letter-spacing: var(--tracking-normal);
+}
+
+h3, .h3 {
+  font-size: var(--fs-12);
+  font-weight: var(--fw-semibold);
+  color: var(--fg-dim);
+  letter-spacing: var(--tracking-normal);
+}
+
+.label-uppr {
+  font-size: var(--fs-10);
+  font-weight: var(--fw-regular);
+  color: var(--fg-quiet);
+  letter-spacing: var(--tracking-uppr);
+  text-transform: uppercase;
+}
+
+p, .p {
+  font-size: var(--fs-13);
+  line-height: var(--lh-body);
+  color: var(--fg-muted);
+}
+
+small, .small {
+  font-size: var(--fs-11);
+  color: var(--fg-quieter);
+}
+
+.caption {
+  font-size: var(--fs-10);
+  color: var(--fg-ghost);
+}
+
+code, pre, .mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+}
+
+/* Scrollbar — the prototype's super-thin rail */
+*::-webkit-scrollbar       { width: 4px; height: 4px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--border-soft); border-radius: var(--radius-xs); }
